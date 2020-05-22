@@ -45,11 +45,7 @@ class State(WorkBotDBBase):
         self.desc = desc
 
     def __repr__(self):
-        return "<State: name={}>".format(self.name)
-
-
-def find_state(session: Session, name: str):
-    return session.query(State).filter(State.name == name).one()
+        return "<State: {}>".format(self.name)
 
 
 class WorkType(WorkBotDBBase):
@@ -69,10 +65,6 @@ class WorkType(WorkBotDBBase):
         return "<WorkType: name={}, desc={}>".format(self.name, self.desc)
 
 
-def find_work_type(session: Session, name: str):
-    return session.query(WorkType).filter(WorkType.name == name).one()
-
-
 class InstrumentType(WorkBotDBBase):
     __tablename__ = 'instrumenttype'
 
@@ -87,16 +79,8 @@ class InstrumentType(WorkBotDBBase):
         self.model = model
 
     def __repr__(self):
-        tmpl = "<InstrumentType: manufacturer={}, model={}>"
+        tmpl = "<InstrumentType: manuf={}, model={}>"
         return tmpl.format(self.manufacturer, self.model)
-
-
-def find_instrument_type(session: Session,
-                         inst_manufacturer: str,
-                         inst_model: str) -> InstrumentType:
-    return session.query(InstrumentType).filter(
-            InstrumentType.manufacturer == inst_manufacturer,
-            InstrumentType.model == inst_model).one()
 
 
 class WorkInstance(WorkBotDBBase):
@@ -131,7 +115,7 @@ class WorkInstance(WorkBotDBBase):
         self.work_type = work_type
 
     def __repr__(self):
-        tmpl = "<WorkInstance: id={}, instrument={}, work_type={}, state={}>"
+        tmpl = "<WorkInstance: id={}, instr={}, type={}, state={}>"
         return tmpl.format(self.id, self.instrument_type, self.work_type.name,
                            self.state())
 
@@ -313,6 +297,22 @@ class InstanceState(WorkBotDBBase):
     def __repr__(self):
         tmpl = "<InstanceState: rank={} instance={}, state={}, time={}>"
         return tmpl.format(self.rank, self.instance_id, self.state, self.time)
+
+
+def find_state(session: Session, name: str):
+    return session.query(State).filter(State.name == name).one()
+
+
+def find_work_type(session: Session, name: str):
+    return session.query(WorkType).filter(WorkType.name == name).one()
+
+
+def find_instrument_type(session: Session,
+                         inst_manufacturer: str,
+                         inst_model: str) -> InstrumentType:
+    return session.query(InstrumentType).filter(
+            InstrumentType.manufacturer == inst_manufacturer,
+            InstrumentType.model == inst_model).one()
 
 
 def initialize_database(*args, **kwargs):
