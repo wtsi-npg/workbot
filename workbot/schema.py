@@ -1,10 +1,10 @@
 import operator
 
-from sqlalchemy import Column, ForeignKey, create_engine
+from sqlalchemy import Column, ForeignKey
 from sqlalchemy import Integer, String, DateTime
 from sqlalchemy.ext.associationproxy import association_proxy
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import relationship, Session, sessionmaker
+from sqlalchemy.orm import relationship, Session
 from sqlalchemy.sql import func
 
 from workbot.config import PENDING_STATE, STARTED_STATE, STAGED_STATE, \

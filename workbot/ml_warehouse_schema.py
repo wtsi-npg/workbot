@@ -8,7 +8,6 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship, Session
 
 MLWHBase = declarative_base()
-metadata = MLWHBase.metadata
 
 
 class Sample(MLWHBase):
