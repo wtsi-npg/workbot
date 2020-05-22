@@ -315,24 +315,18 @@ def find_instrument_type(session: Session,
             InstrumentType.model == inst_model).one()
 
 
-def initialize_database(*args, **kwargs):
-    engine = create_engine(*args, **kwargs)
-    WorkBotDBBase.metadata.create_all(engine)
+def initialize_database(session: Session):
+    """Initializes the database dictionary tables
 
-    session_maker = sessionmaker(bind=engine)
-    sess = session_maker()
-
-    initialize_instruments(sess)
-    initialize_worktypes(sess)
-    initialize_states(sess)
-
-    sess.commit()
-    sess.close()
-
-    return True
+    Inserts values into the dictionary tables for instrument types, work
+    types and work states."""
+    _initialize_instruments(session)
+    _initialize_worktypes(session)
+    _initialize_states(session)
+    session.commit()
 
 
-def initialize_states(session):
+def _initialize_states(session):
     states = [
         State(name=PENDING_STATE, desc="Pending any action"),
         State(name=STAGED_STATE, desc="The work data are staged"),
@@ -348,14 +342,14 @@ def initialize_states(session):
     session.add_all(states)
 
 
-def initialize_worktypes(session):
+def _initialize_worktypes(session):
     types = [
         WorkType(name=ARTIC_NEXTFLOW_WORKTYPE, desc="ARTIC NextFlow pipeline")
     ]
     session.add_all(types)
 
 
-def initialize_instruments(session):
+def _initialize_instruments(session):
     types = [
         InstrumentType(manufacturer=OXFORD_NANOPORE, model=GRIDION_MODEL),
         InstrumentType(manufacturer=OXFORD_NANOPORE, model=PROMETHION_MODEL)

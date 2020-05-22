@@ -45,7 +45,8 @@ def session(tmp_path):
     session_maker = sessionmaker(bind=engine)
     sess = session_maker()
 
-    initialize_database(uri, echo=False)
+    initialize_database(sess)
+    sess.commit()
 
     yield sess
     sess.close()
