@@ -4,7 +4,7 @@ ARTIC_NEXTFLOW_WORKTYPE = "ARTIC NextFlow"
 # Work states
 PENDING_STATE = "Pending"
 
-STAGED_STATE = "Staging"
+STAGED_STATE = "Staged"
 FAILED_STAGING_STATE = "Failed staging"
 
 STARTED_STATE = "Started"
