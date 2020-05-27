@@ -3,7 +3,7 @@ import json
 import subprocess
 
 from os.path import dirname, basename
-from typing import Dict
+from typing import Dict, List
 
 log = logging.getLogger(__package__)
 
@@ -77,7 +77,7 @@ class BatonClient(object):
         args = {"operation": "rem"}
         self.execute("metamod", args, item)
 
-    def meta_query(self, avus: Dict, zone=None,
+    def meta_query(self, avus: List, zone=None,
                    collection=False, data_object=False):
         args = {}
         if collection:
@@ -169,8 +169,7 @@ class RodsItem(object):
     def metadata(self):
         val = self._list(avu=True)
         if "avus" not in val.keys():
-            raise BatonError("collection key missing from {}".format(val))
-
+            raise BatonError("avus key missing from {}".format(val))
         return val["avus"]
 
 
