@@ -2,7 +2,6 @@ import operator
 
 from sqlalchemy import Column, ForeignKey
 from sqlalchemy import Integer, String, DateTime
-from sqlalchemy.ext.associationproxy import association_proxy
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship, Session
 from sqlalchemy.sql import func
@@ -10,8 +9,7 @@ from sqlalchemy.sql import func
 from workbot.config import PENDING_STATE, STARTED_STATE, STAGED_STATE, \
     FAILED_STAGING_STATE, SUCCEEDED_STATE, FAILED_STATE, \
     FAILED_UNSTAGING_STATE, UNSTAGED_STATE, \
-    COMPLETED_STATE, CANCELLED_STATE, ARTIC_NEXTFLOW_WORKTYPE, OXFORD_NANOPORE, \
-    GRIDION_MODEL, PROMETHION_MODEL
+    COMPLETED_STATE, CANCELLED_STATE, ARTIC_NEXTFLOW_WORKTYPE
 
 WorkBotDBBase = declarative_base()
 
@@ -65,40 +63,15 @@ class WorkType(WorkBotDBBase):
         return "<WorkType: name={}, desc={}>".format(self.name, self.desc)
 
 
-class InstrumentType(WorkBotDBBase):
-    __tablename__ = 'instrumenttype'
-
-    id = Column(Integer, autoincrement=True, primary_key=True)
-    manufacturer = Column(String(128), nullable=False)
-    model = Column(String(128), nullable=False)
-
-    def __init__(self,
-                 manufacturer: str,
-                 model: str):
-        self.manufacturer = manufacturer
-        self.model = model
-
-    def __repr__(self):
-        tmpl = "<InstrumentType: manuf={}, model={}>"
-        return tmpl.format(self.manufacturer, self.model)
-
-
 class WorkInstance(WorkBotDBBase):
     __tablename__ = 'workinstance'
 
     id = Column(Integer, autoincrement=True, primary_key=True)
-    experiment_name = Column(String(1024), nullable=False,
-                             comment="name of the experiment or run")
-    input_manifest = Column(String(2048), nullable=True)
-    output_manifest = Column(String(2048), nullable=True)
+    input_path = Column(String(2048), nullable=False)
+    # output_path = Column(String(2048), nullable=True)
 
     type_id = Column(Integer, ForeignKey('worktype.id'), nullable=False)
     work_type = relationship("WorkType")
-
-    instrument_id = Column(Integer, ForeignKey('instrumenttype.id'),
-                           nullable=False)
-    instrument_type = relationship("InstrumentType")
-    instrument_position = Column(Integer, nullable=False)
 
     state_id = Column(Integer, ForeignKey('state.id'), nullable=False)
     state = relationship("State")
@@ -109,21 +82,17 @@ class WorkInstance(WorkBotDBBase):
                           default=func.now())
 
     def __init__(self,
-                 inst_type: InstrumentType,
-                 inst_position: int,
-                 expt_name: str,
+                 input_path: str,
                  work_type: WorkType,
                  state: State):
-        self.instrument_type = inst_type
-        self.instrument_position = inst_position
-        self.experiment_name = expt_name
+        self.input_path = input_path
         self.work_type = work_type
         self.state = state
 
     def __repr__(self):
-        tmpl = "<WorkInstance: id={}, instr={}, type={}, state={} " \
+        tmpl = "<WorkInstance: id={}, input={}, type={}, state={} " \
                "created={} updated={}>"
-        return tmpl.format(self.id, self.instrument_type, self.work_type.name,
+        return tmpl.format(self.id, self.input_path,  self.work_type.name,
                            self.state, self.created, self.last_updated)
 
     """Changes the current state to Staged.
@@ -268,20 +237,11 @@ def find_work_type(session: Session, name: str):
     return session.query(WorkType).filter(WorkType.name == name).one()
 
 
-def find_instrument_type(session: Session,
-                         inst_manufacturer: str,
-                         inst_model: str) -> InstrumentType:
-    return session.query(InstrumentType).filter(
-            InstrumentType.manufacturer == inst_manufacturer,
-            InstrumentType.model == inst_model).one()
-
-
 def initialize_database(session: Session):
     """Initializes the database dictionary tables
 
-    Inserts values into the dictionary tables for instrument types, work
-    types and work states."""
-    _initialize_instruments(session)
+    Inserts values into the dictionary tables for work types and work
+    states."""
     _initialize_worktypes(session)
     _initialize_states(session)
     session.commit()
@@ -306,13 +266,5 @@ def _initialize_states(session):
 def _initialize_worktypes(session):
     types = [
         WorkType(name=ARTIC_NEXTFLOW_WORKTYPE, desc="ARTIC NextFlow pipeline")
-    ]
-    session.add_all(types)
-
-
-def _initialize_instruments(session):
-    types = [
-        InstrumentType(manufacturer=OXFORD_NANOPORE, model=GRIDION_MODEL),
-        InstrumentType(manufacturer=OXFORD_NANOPORE, model=PROMETHION_MODEL)
     ]
     session.add_all(types)

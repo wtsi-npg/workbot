@@ -5,10 +5,10 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 import workbot
-from workbot.config import ARTIC_NEXTFLOW_WORKTYPE, OXFORD_NANOPORE, \
-    FAILED_STATE, CANCELLED_STATE, PENDING_STATE
-from workbot.schema import WorkInstance, State, \
-    find_instrument_type, find_work_type, find_state
+from workbot.config import ARTIC_NEXTFLOW_WORKTYPE, \
+    PENDING_STATE, FAILED_STATE, CANCELLED_STATE
+from workbot.irods import BatonClient
+from workbot.schema import WorkInstance, State, find_work_type, find_state
 
 log = logging.getLogger(__name__)
 
@@ -17,24 +17,9 @@ class AnalysisError(Exception):
     pass
 
 
-class WorkBotBase(object):
-    def __init__(self,
-                 inst_manufacturer: str,
-                 inst_model: str,
-                 inst_position: int,
-                 expt_name: str):
-        self.instrument_manufacturer = inst_manufacturer
-        self.instrument_model = inst_model
-        self.instrument_position = inst_position
-        self.experiment_name = expt_name
-
-
-class ONTWorkBot(WorkBotBase):
-    def __init__(self,
-                 inst_model: str,
-                 inst_position: int,
-                 expt_name: str):
-        super().__init__(OXFORD_NANOPORE, inst_model, inst_position, expt_name)
+class WorkBot(object):
+    def __init__(self, input_path: str):
+        self.input_path = input_path
 
     """Returns the identifier of an analysis suitable for the data"""
     @staticmethod
@@ -58,15 +43,10 @@ class ONTWorkBot(WorkBotBase):
                       session: Session,
                       states=None,
                       not_states=None) -> List[workbot.schema.WorkInstance]:
-        itype = find_instrument_type(session,
-                                     self.instrument_manufacturer,
-                                     self.instrument_model)
 
         q = session.query(WorkInstance).\
             join(State).\
-            filter(WorkInstance.instrument_type == itype,
-                   WorkInstance.experiment_name == self.experiment_name,
-                   WorkInstance.instrument_position == self.instrument_position)
+            filter(WorkInstance.input_path == self.input_path)
 
         if states:
             q = q.filter(State.name.in_(states))
@@ -99,21 +79,13 @@ class ONTWorkBot(WorkBotBase):
         if existing:
             tmpl = "An error occurred adding the analysis: " \
                    "analyses already exist for " \
-                   "{} experiment {} position {}, not in states {}"
-            raise AnalysisError(tmpl.format(self.instrument_model,
-                                            self.experiment_name,
-                                            self.instrument_position,
-                                            ignore_states))
+                   "input {}, not in states {}"
+            raise AnalysisError(tmpl.format(self.input_path, ignore_states))
 
-        itype = find_instrument_type(session,
-                                     self.instrument_manufacturer,
-                                     self.instrument_model)
         wtype = find_work_type(session, self.choose_analysis())
         pending = find_state(session, PENDING_STATE)
 
-        work = WorkInstance(itype,
-                            self.instrument_position,
-                            self.experiment_name, wtype, pending)
+        work = WorkInstance(self.input_path, wtype, pending)
         log.info("Adding work {}".format(work))
 
         session.add(work)
@@ -142,14 +114,30 @@ class ONTWorkBot(WorkBotBase):
         raise NotImplementedError
 
 
-def add_ont_analyses(session: Session, inst_model: str, expts) -> int:
+def add_new_analyses(session: Session, baton: BatonClient, expts) -> int:
     num_added = 0
 
     try:
         for expt, pos in expts:
             log.info("Experiment {}, Position {}".format(expt, pos))
 
-            wb = ONTWorkBot(inst_model, pos, expt)
+            # We should find in iRODS a single collection for a given
+            # experiment and slot. However, if there's more then we can still
+            # analyse each one.
+            found = baton.meta_query([{"attribute": "experiment_name",
+                                      "value": expt},
+                                      {"attribute": "instrument_slot",
+                                       "value": str(pos)}], collection=True)
+
+            log.debug("For expt: {} pos: {} found: {} "
+                      "collections in iRODS".format(expt, pos, found))
+
+            if not found:
+                continue
+
+            input_path = found[0]
+
+            wb = WorkBot(input_path)
             analyses = wb.find_analyses(session)
             if analyses:
                 log.info("Analyses exist for experiment {}, position {}, "

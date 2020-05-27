@@ -2,14 +2,16 @@ import pytest
 from pytest import mark as m
 
 from tests.schema_fixture import wb_session
-from workbot.config import OXFORD_NANOPORE, GRIDION_MODEL, \
-    ARTIC_NEXTFLOW_WORKTYPE, STAGED_STATE, FAILED_STAGING_STATE, \
-    CANCELLED_STATE, STARTED_STATE, UNSTAGED_STATE, FAILED_UNSTAGING_STATE, \
-    SUCCEEDED_STATE, FAILED_STATE, COMPLETED_STATE, PENDING_STATE
-from workbot.schema import StateTransitionError, WorkInstance, \
-    find_instrument_type, find_work_type, find_state
+from workbot.config import ARTIC_NEXTFLOW_WORKTYPE, PENDING_STATE, \
+    STAGED_STATE, \
+    FAILED_STAGING_STATE, STARTED_STATE, UNSTAGED_STATE, \
+    FAILED_UNSTAGING_STATE, \
+    SUCCEEDED_STATE, FAILED_STATE, COMPLETED_STATE, CANCELLED_STATE
+from workbot.schema import StateTransitionError, WorkInstance, find_work_type, \
+    find_state
 
 _ = wb_session
+
 
 # @pytest.fixture(scope="module")
 # def initialized_db_session():
@@ -237,15 +239,13 @@ def test_failed_unstaging_to_unstaged(wb_session):
 
 
 def make_instance(session):
-    gridion = find_instrument_type(session, OXFORD_NANOPORE, GRIDION_MODEL)
-    expt_name = "my_experiment"
-    inst_position = 1
-
     artic_nf = find_work_type(session, ARTIC_NEXTFLOW_WORKTYPE)
     pending = find_state(session, PENDING_STATE)
-    wi = WorkInstance(gridion, inst_position, expt_name, artic_nf, pending)
+    input_path = "/seq/ont/gridion/experiment_1"
+    wi = WorkInstance(input_path, artic_nf, pending)
     session.add(wi)
     return wi
+
 
 def make_staged(session):
     wi = make_instance(session)

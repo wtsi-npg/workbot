@@ -16,10 +16,3 @@ UNSTAGED_STATE = "Unstaged"
 FAILED_UNSTAGING_STATE = "Failed unstaging"
 
 COMPLETED_STATE = "Complete"
-
-# Instrument manufacturers
-OXFORD_NANOPORE = "Oxford Nanopore"
-
-# Instrument models
-GRIDION_MODEL = "GridION"
-PROMETHION_MODEL = "PromethION"
