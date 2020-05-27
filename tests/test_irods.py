@@ -81,9 +81,11 @@ def test_meta_add_collection(irods_tmp_coll, baton_session):
     coll = Collection(baton_session, p)
     assert coll.metadata() == []
 
-    avu = {"attribute": "abcde", "value": "12345"}
-    coll.meta_add(avu)
-    assert coll.metadata() == [avu]
+    avu1 = {"attribute": "abcde", "value": "12345"}
+    avu2 = {"attribute": "vwxyz", "value": "67890"}
+    coll.meta_add(avu1, avu2)
+    assert avu1 in coll.metadata()
+    assert avu2 in coll.metadata()
 
 
 @m.it("Can add metadata to a data object")
@@ -94,9 +96,11 @@ def test_meta_add_data_object(irods_tmp_coll, baton_session):
     obj = DataObject(baton_session, p)
     assert obj.metadata() == []
 
-    avu = {"attribute": "abcde", "value": "12345"}
-    obj.meta_add(avu)
-    assert obj.metadata() == [avu]
+    avu1 = {"attribute": "abcde", "value": "12345"}
+    avu2 = {"attribute": "vwxyz", "value": "67890"}
+    obj.meta_add(avu1, avu2)
+    assert avu1 in obj.metadata()
+    assert avu2 in obj.metadata()
 
 
 @m.it("Can find a collection by its metadata")
