@@ -143,7 +143,7 @@ class OseqFlowcell(MLWHBase):
 
 def find_recent_experiments(session: Session,
                             since: datetime) -> List[str]:
-    """Finds recent experiments in the ML warehouse database.
+    """Finds recent ONT experiments in the ML warehouse database.
 
     Finds ONT experiments in the ML warehouse database that have been updated
     since a specified date and time. If any element of the experiment (any of
@@ -172,8 +172,8 @@ def find_recent_experiments(session: Session,
 
 def find_recent_experiment_pos(session: Session,
                                since: datetime) -> List[Tuple]:
-    """Finds recent experiments and instrument positions in the ML warehouse
-     database.
+    """Finds recent ONT experiments and instrument positions in the ML
+    warehouse database.
 
     Finds ONT experiments and associated instrument positions in the ML
     warehouse database that have been updated since a specified date and time.
