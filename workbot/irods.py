@@ -87,7 +87,7 @@ class BatonClient(object):
 
         item = {"avus": avus}
         if zone:
-            item["collection"] = zone # Zone hint
+            item["collection"] = zone  # Zone hint
 
         result = self.execute("metaquery", args, item)
 
@@ -220,13 +220,22 @@ def imkdir(remote_path: str, make_parents=True):
         cmd.append("-p")
 
     cmd.append(remote_path)
+    _run(cmd)
 
-    try:
-        log.debug("Running {}".format(cmd))
-        subprocess.run(cmd, capture_output=True, check=True)
-    except subprocess.CalledProcessError as e:
-        log.error("{}".format(e.stderr.decode("utf-8")))
-        raise e
+
+def iget(remote_path: str, local_path: str, force=False, verify_checksum=True,
+         recurse=False):
+    cmd = ["iget"]
+    if force:
+        cmd.append("-f")
+    if verify_checksum:
+        cmd.append("-K")
+    if recurse:
+        cmd.append("-r")
+
+    cmd.append(remote_path)
+    cmd.append(local_path)
+    _run(cmd)
 
 
 def iput(local_path: str, remote_path: str, force=False, verify_checksum=True,
@@ -241,13 +250,7 @@ def iput(local_path: str, remote_path: str, force=False, verify_checksum=True,
 
     cmd.append(local_path)
     cmd.append(remote_path)
-
-    try:
-        log.debug("Running {}".format(cmd))
-        subprocess.run(cmd, capture_output=True, check=True)
-    except subprocess.CalledProcessError as e:
-        log.error("{}".format(e.stderr.decode("utf-8")))
-        raise e
+    _run(cmd)
 
 
 def irm(remote_path: str, force=False, recurse=False):
@@ -258,7 +261,10 @@ def irm(remote_path: str, force=False, recurse=False):
         cmd.append("-r")
 
     cmd.append(remote_path)
+    _run(cmd)
 
+
+def _run(cmd: List[str]):
     try:
         log.debug("Running {}".format(cmd))
         subprocess.run(cmd, capture_output=True, check=True)

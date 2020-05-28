@@ -27,6 +27,23 @@ def test_start_baton_client():
     assert not client.is_running()
 
 
+@m.context("When stopped")
+@m.it("Can be re-started")
+def test_restart_baton_client(irods_tmp_coll):
+    client = BatonClient()
+    client.start()
+    assert client.is_running()
+    client.stop()
+    assert not client.is_running()
+    # Re-start
+    client.start()
+    assert client.is_running()
+    # Try an operation
+    coll = Collection(client, irods_tmp_coll)
+    assert coll.exists()
+    client.stop
+
+
 @m.context("When running")
 @m.it("Can list a collection (non-recursively)")
 def test_list_collection(irods_tmp_coll, baton_session):
