@@ -1,5 +1,3 @@
-import operator
-
 from sqlalchemy import Column, ForeignKey
 from sqlalchemy import Integer, String, DateTime
 from sqlalchemy.ext.declarative import declarative_base
@@ -7,9 +5,9 @@ from sqlalchemy.orm import relationship, Session
 from sqlalchemy.sql import func
 
 from workbot.config import PENDING_STATE, STARTED_STATE, STAGED_STATE, \
-    FAILED_STAGING_STATE, SUCCEEDED_STATE, FAILED_STATE, \
-    FAILED_UNSTAGING_STATE, UNSTAGED_STATE, \
-    COMPLETED_STATE, CANCELLED_STATE, ARTIC_NEXTFLOW_WORKTYPE
+    SUCCEEDED_STATE, FAILED_STATE, \
+    UNSTAGED_STATE, COMPLETED_STATE, CANCELLED_STATE, \
+    ARTIC_NEXTFLOW_WORKTYPE, ARCHIVED_STATE, ANNOTATED_STATE
 
 WorkBotDBBase = declarative_base()
 
@@ -103,23 +101,10 @@ class WorkInstance(WorkBotDBBase):
         StateTransitionError: An error occurred changing state.
     """
     def staged(self, session: Session):
-        if self.state is None or self.state.name != PENDING_STATE:
+        if self.state.name != PENDING_STATE:
             raise StateTransitionError(self.state.name, STAGED_STATE)
 
-        self.update_state(session, STAGED_STATE)
-
-    """Changes the current state to Failed Staging.
-
-    Changes state to Failed Staging, if the current state is Pending.
-
-    Raises:
-        StateTransitionError: An error occurred changing state.
-    """
-    def failed_staging(self, session: Session):
-        if self.state is None or self.state.name != PENDING_STATE:
-            raise StateTransitionError(self.state.name, FAILED_STAGING_STATE)
-
-        self.update_state(session, FAILED_STAGING_STATE)
+        self._update_state(session, STAGED_STATE)
 
     """Changes the current state to Started.
 
@@ -129,10 +114,10 @@ class WorkInstance(WorkBotDBBase):
         StateTransitionError: An error occurred changing state.
     """
     def started(self, session: Session):
-        if self.state is None or self.state.name != STAGED_STATE:
+        if self.state.name != STAGED_STATE:
             raise StateTransitionError(self.state.name, STARTED_STATE)
 
-        self.update_state(session, STARTED_STATE)
+        self._update_state(session, STARTED_STATE)
 
     """Changes the current state to Succeeded.
 
@@ -142,72 +127,49 @@ class WorkInstance(WorkBotDBBase):
         StateTransitionError: An error occurred changing state.
     """
     def succeeded(self, session: Session):
-        if self.state is None or self.state.name != STARTED_STATE:
+        if self.state.name != STARTED_STATE:
             raise StateTransitionError(self.state.name, SUCCEEDED_STATE)
 
-        self.update_state(session, SUCCEEDED_STATE)
+        self._update_state(session, SUCCEEDED_STATE)
 
-    """Changes the current state to Failed.
+    """Changes the current state to Archived.
 
-    Changes state to Failed, if the current state is Started.
-
-    Raises:
-        StateTransitionError: An error occurred changing state.
-    """
-    def failed(self, session: Session):
-        if self.state is None:
-            raise StateTransitionError(None, UNSTAGED_STATE)
-
-        if self.state.name != STARTED_STATE:
-            raise StateTransitionError(self.state.name, FAILED_STATE)
-
-        self.update_state(session, FAILED_STATE)
-
-    """Changes the current state to Cancelled.
-
-    Changes state to Cancelled. This can be done from any state.
+    Changes state to Archived, if the current state is Succeeded.
 
     Raises:
         StateTransitionError: An error occurred changing state.
     """
-    def cancelled(self, session: Session):
-        self.update_state(session, CANCELLED_STATE)
+    def archived(self, session: Session):
+        if self.state.name != SUCCEEDED_STATE:
+            raise StateTransitionError(self.state.name, ARCHIVED_STATE)
+
+        self._update_state(session, ARCHIVED_STATE)
+
+    """Changes the current state to Annotated.
+
+    Changes state to Annotated, if the current state is Archived.
+
+    Raises:
+        StateTransitionError: An error occurred changing state.
+    """
+    def annotated(self, session: Session):
+        if self.state.name != ARCHIVED_STATE:
+            raise StateTransitionError(self.state.name, ANNOTATED_STATE)
+
+        self._update_state(session, ANNOTATED_STATE)
 
     """Changes the current state to Unstaged.
 
-    Changes state to Unstaged, if the current state is Staged, Failed Staging,
-    Succeeded or Failed.
+    Changes state to Unstaged, if the current state is Staged or Annotated.
 
     Raises:
         StateTransitionError: An error occurred changing state.
     """
     def unstaged(self, session):
-        if self.state is None or \
-                self.state.name not in [STAGED_STATE,
-                                        FAILED_STAGING_STATE,
-                                        SUCCEEDED_STATE,
-                                        FAILED_STATE,
-                                        FAILED_UNSTAGING_STATE]:
+        if self.state.name not in [STAGED_STATE, ANNOTATED_STATE]:
             raise StateTransitionError(self.state.name, UNSTAGED_STATE)
 
-        self.update_state(session, UNSTAGED_STATE)
-
-    """Changes the current state to Failed Unstaging.
-
-    Changes state to Failed Unstaging, if the current state is Staged,
-    Succeeded or Failed.
-
-    Raises:
-        StateTransitionError: An error occurred changing state.
-    """
-    def failed_unstaging(self, session: Session):
-        if self.state is None or self.state.name not in [STAGED_STATE,
-                                                         SUCCEEDED_STATE,
-                                                         FAILED_STATE]:
-            raise StateTransitionError(self.state.name,
-                                       FAILED_UNSTAGING_STATE)
-
-        self.update_state(session, FAILED_UNSTAGING_STATE)
+        self._update_state(session, UNSTAGED_STATE)
 
     """Changes the current state to Completed.
 
@@ -217,12 +179,66 @@ class WorkInstance(WorkBotDBBase):
         StateTransitionError: An error occurred changing state.
     """
     def completed(self, session: Session):
-        if self.state and self.state.name != UNSTAGED_STATE:
+        if self.state.name != UNSTAGED_STATE:
             raise StateTransitionError(self.state.name, COMPLETED_STATE)
 
-        self.update_state(session, COMPLETED_STATE)
+        self._update_state(session, COMPLETED_STATE)
 
-    def update_state(self, session: Session, name: str):
+    """Changes the current state to Failed.
+
+    Changes state to Failed, if the current state is Started. Failed is an
+    end state and data will remain staged for inspection until cleaned up.
+
+    Raises:
+        StateTransitionError: An error occurred changing state.
+    """
+    def failed(self, session: Session):
+        if self.state.name != STARTED_STATE:
+            raise StateTransitionError(self.state.name, FAILED_STATE)
+
+        self._update_state(session, FAILED_STATE)
+
+    """Changes the current state to Cancelled.
+
+    Changes state to Cancelled. This can be done from any state.
+
+    Raises:
+        StateTransitionError: An error occurred changing state.
+    """
+    def cancelled(self, session: Session):
+        self._update_state(session, CANCELLED_STATE)
+
+    def is_pending(self):
+        return self.state.name == PENDING_STATE
+
+    def is_staged(self):
+        return self.state.name == STAGED_STATE
+
+    def is_started(self):
+        return self.state.name == STARTED_STATE
+
+    def is_succeeded(self):
+        return self.state.name == SUCCEEDED_STATE
+
+    def is_archived(self):
+        return self.state.name == ARCHIVED_STATE
+
+    def is_annotated(self):
+        return self.state.name == ANNOTATED_STATE
+
+    def is_unstaged(self):
+        return self.state.name == UNSTAGED_STATE
+
+    def is_completed(self):
+        return self.state.name == COMPLETED_STATE
+
+    def is_failed(self):
+        return self.state.name == FAILED_STATE
+
+    def is_cancelled(self):
+        return self.state.name == CANCELLED_STATE
+
+    def _update_state(self, session: Session, name: str):
         s = session.query(State).filter(State.name == name).one()
         self.state = s
         self.last_updated = func.now()
@@ -251,14 +267,14 @@ def _initialize_states(session):
     states = [
         State(name=PENDING_STATE, desc="Pending any action"),
         State(name=STAGED_STATE, desc="The work data are staged"),
-        State(name=FAILED_STAGING_STATE, desc="Staging has failed"),
         State(name=STARTED_STATE, desc="Work started"),
         State(name=SUCCEEDED_STATE, desc="Work was done successfully"),
         State(name=FAILED_STATE, desc="Work has failed"),
-        State(name=CANCELLED_STATE, desc="Work was cancelled"),
+        State(name=ARCHIVED_STATE, desc="Work has been archived"),
+        State(name=ANNOTATED_STATE, desc="Work has been annotated"),
         State(name=UNSTAGED_STATE, desc="The work data were unstaged"),
-        State(name=FAILED_UNSTAGING_STATE, desc="Unstaging has failed"),
-        State(name=COMPLETED_STATE, desc="All actions are complete")
+        State(name=COMPLETED_STATE, desc="All actions are complete"),
+        State(name=CANCELLED_STATE, desc="Work was cancelled"),
     ]
     session.add_all(states)
 
