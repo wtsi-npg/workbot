@@ -79,6 +79,8 @@ class WorkInstance(WorkBotDBBase):
     last_updated = Column(DateTime(timezone=True), nullable=False,
                           default=func.now())
 
+
+
     def __init__(self,
                  input_path: str,
                  work_type: WorkType,
@@ -243,6 +245,35 @@ class WorkInstance(WorkBotDBBase):
         self.state = s
         self.last_updated = func.now()
         session.flush()
+
+
+class ONTMeta(WorkBotDBBase):
+    """Oxford Nanopore-specific metadata."""
+    __tablename__ = 'ontmeta'
+
+    def __init__(self, wi: WorkInstance, experiment_name: str,
+                 instrument_slot: int):
+        """Create new ONTMeta metadata.
+
+        Args:
+            wi: A WorkInstance to which the metadata applies.
+            experiment_name: ONT experiment name.
+            instrument_slot: ONT instrument slot.
+        """
+        self.workinstance = wi
+        self.experiment_name = experiment_name
+        self.instrument_slot = instrument_slot
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    workinstance_id = Column(Integer, ForeignKey('workinstance.id'),
+                             nullable=False)
+    workinstance = relationship("WorkInstance")
+    experiment_name = Column(String(255), nullable=False)
+    instrument_slot = Column(Integer, nullable=False)
+
+    def __repr__(self):
+        return "<ONTMeta: experiment: {}, position: {}>".format(
+            self.experiment_name, self.instrument_slot)
 
 
 def find_state(session: Session, name: str):
