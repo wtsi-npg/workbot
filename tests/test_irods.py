@@ -6,6 +6,7 @@ from pytest import mark as m
 from tests.irods_fixture import irods_tmp_coll, baton_session
 from workbot.irods import BatonClient, Collection, RodsError, DataObject
 
+#  Stop IDEs "optimizing" away these imports
 _ = irods_tmp_coll
 _ = baton_session
 
@@ -114,7 +115,7 @@ def test_meta_add_collection(irods_tmp_coll, baton_session):
     assert avu1 in coll.metadata()
     assert avu2 in coll.metadata()
 
-    assert coll.meta_add(avu1, avu2) == 0,\
+    assert coll.meta_add(avu1, avu2) == 0, \
         "adding collection metadata is idempotent"
 
 

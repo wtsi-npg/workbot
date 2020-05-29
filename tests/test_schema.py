@@ -7,32 +7,11 @@ from workbot.config import ARTIC_NEXTFLOW_WORKTYPE, PENDING_STATE, \
     STARTED_STATE, UNSTAGED_STATE, \
     SUCCEEDED_STATE, FAILED_STATE, COMPLETED_STATE, CANCELLED_STATE, \
     ARCHIVED_STATE, ANNOTATED_STATE
-from workbot.schema import StateTransitionError, WorkInstance, find_work_type, \
-    find_state
+from workbot.schema import StateTransitionError, WorkInstance, \
+    find_work_type, find_state
 
+#  Stop IDEs "optimizing" away these imports
 _ = wb_session
-
-
-# @pytest.fixture(scope="module")
-# def initialized_db_session():
-#     sess = None
-#
-#     def _make_session_and_initialize(uri):
-#         nonlocal sess
-#
-#         engine = create_engine(uri, echo=False)
-#         Base.metadata.create_all(engine)
-#
-#         session_maker = sessionmaker(bind=engine)
-#         sess = session_maker()
-#
-#         initialize_database(uri, echo=False)
-#
-#         return sess
-#
-#     yield _make_session_and_initialize
-#
-#     sess.close()
 
 
 @m.describe("WorkInstance state transitions")

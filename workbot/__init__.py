@@ -9,14 +9,9 @@ from workbot.schema import WorkBotDBBase
 
 
 class ConfigurationError(Exception):
-    """Exception raised for errors in the configuration or environment.
-
-    Attributes:
-        message -- explanation of the error
-    """
-
-    def __init__(self, message):
-        self.message = message
+    """Exception raised for errors in the configuration or environment."""
+    def __init__(self):
+        pass
 
 
 def _init_workbot_db():
@@ -49,6 +44,12 @@ WHSession = _init_mlwh_db()
 
 
 def get_wb_session() -> Session:
+    """Get a new SQL session for the WorkBot database from the factory. This
+    function ensures thread safe access to the SQLAlchemy database engine.
+
+    Returns: Session
+
+    """
     if WBSession is None:
         raise ConfigurationError("The WBDB_URI environment variable is not "
                                  "set. This should be set to the database "
@@ -58,6 +59,12 @@ def get_wb_session() -> Session:
 
 
 def get_wh_session() -> Session:
+    """Get a new SQL session for the ML warehouse database from the factory.
+    This function ensures thread safe access to the SQLAlchemy database engine.
+
+    Returns: Session
+
+    """
     if WHSession is None:
         raise ConfigurationError("The MLWH_URI environment is variable not "
                                  "set. This should be set to the database "

@@ -16,6 +16,13 @@ class StateTransitionError(Exception):
     def __init__(self,
                  current: str,
                  new: str):
+        """Exception raised for errors moving a WorkInstance from one State to
+        another.
+
+        Args:
+            current: A State the WorkInstance is in.
+            new: A State the WorkInstance is moving to.
+        """
         self.current = current
         self.new = new
 
@@ -79,12 +86,18 @@ class WorkInstance(WorkBotDBBase):
     last_updated = Column(DateTime(timezone=True), nullable=False,
                           default=func.now())
 
-
-
     def __init__(self,
                  input_path: str,
                  work_type: WorkType,
                  state: State):
+        """Create a new WorkInstance describing an analysis to do.
+
+        Args:
+            input_path: The iRODS collection where the initial data are
+                        located.
+            work_type: A WorkType to perform.
+            state: An initial State.
+        """
         self.input_path = input_path
         self.work_type = work_type
         self.state = state
