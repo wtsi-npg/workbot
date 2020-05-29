@@ -55,6 +55,16 @@ def test_list_collection(irods_tmp_coll, baton_session):
         coll.list()
 
 
+@m.it("Can list collection contents")
+def test_list_collection_contents(irods_tmp_coll, baton_session):
+    p = os.path.join(irods_tmp_coll, "gridion/66/DN585561I_A1/"
+                                     "20190904_1514_GA20000_FAL01979_43578c8f/")
+
+    coll = Collection(baton_session, p)
+    contents = coll.list(contents=True)
+    assert len(contents) == 10
+
+
 @m.it("Can list a data object")
 def test_list_data_object(irods_tmp_coll, baton_session):
     p = os.path.join(irods_tmp_coll, "gridion/66/DN585561I_A1/"
