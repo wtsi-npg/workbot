@@ -9,7 +9,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from workbot import get_wb_session, get_wh_session
 from workbot.irods import BatonClient
 from workbot.ml_warehouse_schema import find_recent_experiment_pos
-from workbot.workbot import add_new_analyses
+from workbot.workbot import add_ont_analyses
 
 description = """
 Adds new experiments to the workbot analysis queue, if they are not already
@@ -90,7 +90,7 @@ def main():
     wb_sess = get_wb_session()
     try:
         baton_client.start()
-        add_new_analyses(wb_sess, baton_client, expts)
+        add_ont_analyses(wb_sess, baton_client, expts)
     except Exception as e:
         log.error("Failed to add analysis for experiments {}".format(expts))
         raise

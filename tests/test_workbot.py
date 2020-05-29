@@ -11,7 +11,7 @@ from workbot.config import PENDING_STATE, CANCELLED_STATE
 from workbot.irods import Collection
 from workbot.ml_warehouse_schema import find_recent_experiment_pos
 from workbot.schema import WorkInstance, State
-from workbot.workbot import WorkBot, AnalysisError, add_new_analyses
+from workbot.workbot import WorkBot, AnalysisError, add_ont_analyses
 
 #  Stop IDEs "optimizing" away these imports
 _ = mlwh_session
@@ -132,7 +132,7 @@ def test_add_new_analyses(mlwh_session, wb_session,
                      ('multiplexed_experiment_003', 3),
                      ('multiplexed_experiment_003', 5)]
 
-    num_added = add_new_analyses(wb_session, baton_session, expts)
+    num_added = add_ont_analyses(wb_session, baton_session, expts)
     assert num_added == 1  # Only one experiment has reached iRODS
 
     q = wb_session.query(WorkInstance).\
@@ -142,6 +142,6 @@ def test_add_new_analyses(mlwh_session, wb_session,
     assert wi.input_path == p
     assert wi.state.name == PENDING_STATE
 
-    num_added = add_new_analyses(wb_session, baton_session, expts)
+    num_added = add_ont_analyses(wb_session, baton_session, expts)
     # One analysis exists, so another should not be added
     assert num_added == 0
