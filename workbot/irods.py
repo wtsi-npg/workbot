@@ -167,10 +167,20 @@ class RodsItem(object):
                 return False
         return True
 
-    def meta_add(self, *avus):
-        item = self._to_dict()
-        item["avus"] = avus
-        self.client.meta_add(item)
+    def meta_add(self, *avus) -> int:
+        current = self.metadata()
+        to_add = []
+
+        for avu in avus:
+            if avu not in current:
+                to_add.append(avu)
+
+        if to_add:
+            item = self._to_dict()
+            item["avus"] = to_add
+            self.client.meta_add(item)
+
+        return len(to_add)
 
     def metadata(self):
         val = self._list(avu=True)

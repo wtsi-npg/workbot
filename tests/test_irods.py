@@ -41,7 +41,7 @@ def test_restart_baton_client(irods_tmp_coll):
     # Try an operation
     coll = Collection(client, irods_tmp_coll)
     assert coll.exists()
-    client.stop
+    client.stop()
 
 
 @m.context("When running")
@@ -114,6 +114,9 @@ def test_meta_add_collection(irods_tmp_coll, baton_session):
     assert avu1 in coll.metadata()
     assert avu2 in coll.metadata()
 
+    assert coll.meta_add(avu1, avu2) == 0,\
+        "adding collection metadata is idempotent"
+
 
 @m.it("Can add metadata to a data object")
 def test_meta_add_data_object(irods_tmp_coll, baton_session):
@@ -128,6 +131,9 @@ def test_meta_add_data_object(irods_tmp_coll, baton_session):
     obj.meta_add(avu1, avu2)
     assert avu1 in obj.metadata()
     assert avu2 in obj.metadata()
+
+    assert obj.meta_add(avu1, avu2) == 0, \
+        "adding data object metadata is idempotent"
 
 
 @m.it("Can find a collection by its metadata")
