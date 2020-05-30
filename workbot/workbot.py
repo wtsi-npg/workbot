@@ -5,21 +5,26 @@ import shutil
 import subprocess
 from typing import List, Tuple
 
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 import workbot
 from workbot.config import ARTIC_NEXTFLOW_WORKTYPE, \
-    PENDING_STATE, CANCELLED_STATE, COMPLETED_STATE, FAILED_STATE
+    PENDING_STATE, CANCELLED_STATE, COMPLETED_STATE, FAILED_STATE, \
+    read_config_file
 from workbot.irods import BatonClient, Collection, BatonError, RodsError, \
-    iget, iput
+    iget, iput, imkdir
 from workbot.schema import WorkInstance, State, find_work_type, find_state, \
     WorkType, ONTMeta
 
 log = logging.getLogger(__name__)
 
 
-class AnalysisError(Exception):
+class WorkBotError(Exception):
+    """Exception raised for general WorkBot errors."""
+    pass
+
+
+class AnalysisError(WorkBotError):
     """Exception raised for errors during the analysis process."""
     pass
 
@@ -54,11 +59,13 @@ class WorkBot(object):
         self.client = BatonClient()  # Starts on demand
         """The baton client for interaction with iRODS"""
 
+        self.config = read_config_file()
+
     def find_analyses(self,
                       session: Session,
                       input_path: str,
                       states=None,
-                      not_states=None) -> List[workbot.schema.WorkInstance]:
+                      not_states=None) -> List[WorkInstance]:
         """Finds work instances in the WorkBot database.
 
         Finds work instances in the WorkBot database, optionally limited to
@@ -181,9 +188,10 @@ class WorkBot(object):
             exists = coll.exists()
 
             if not exists:
-                log.info("Input collection {} does not exist".format(coll))
+                log.info("Input collection {} for "
+                         "{} does not exist".format(coll, wi))
         except BatonError as e:
-            log.error("Failed to find input data: {}".format(e))
+            log.error("Failed to find input data for {}: {}".format(wi, e))
             raise
 
         return exists
@@ -211,10 +219,11 @@ class WorkBot(object):
                                       re.search(r'final_report.txt.gz$', x),
                                       contents))
                 if list(matches):
-                    log.info("Found final report matches: {}".format(matches))
+                    log.debug("Found final report matches: {}".format(matches))
                     complete = True
             except BatonError as e:
-                log.error("Failed to check input data: {}".format(e))
+                log.error("Failed to check input data "
+                          "for {}: {}".format(wi, e))
                 raise
 
         return complete
@@ -239,8 +248,8 @@ class WorkBot(object):
                     wi.staged(session)
                     session.commit()
                 except RodsError as e:
-                    log.error("Failed to stage input data "
-                              "from {} to {}: {}".format(src, dst, e))
+                    log.error("Failed to stage input data for {} "
+                              "from {} to {}: {}".format(wi, src, dst, e))
                     raise
 
     def run_analysis(self, session: Session, wi: WorkInstance):
@@ -253,20 +262,29 @@ class WorkBot(object):
         """
         if wi.is_staged():
             log.info("Starting analysis for {}".format(wi))
+
+            cmd_str = self.config.get(self.work_type, "command",
+                                      fallback=None)
+            if cmd_str is None:
+                raise AnalysisError("Failed to find a 'command' value in the "
+                                    "'{}' section of the configuration "
+                                    "file".format(self.work_type))
+            cmd = cmd_str.split()
+
+            log.info("Running {} for {} ".format(cmd, wi))
             wi.started(session)
             session.commit()
 
-            cmd = ["ls", "-l"]  # FIXME -- lookup the real command to run
-            log.info("Running {} for {} ".format(cmd, wi))
             completed = subprocess.run(cmd, capture_output=True)
             if completed.returncode == 0:
                 wi.succeeded(session)
                 session.commit()
-            else:
-                raise AnalysisError("Running {} for {} failed with "
-                                    "exit code: {}: {}".format(
-                                     cmd, wi, completed.returncode,
-                                     completed.stderr))
+                return
+
+            raise AnalysisError("Running {} for {} failed with "
+                                "exit code: {}: {}".format(
+                                 cmd, wi, completed.returncode,
+                                 completed.stderr.decode("utf-8").rstrip()))
 
     def archive_output_data(self, session: Session, wi: WorkInstance):
         """Archives the analysis results if the analysis completed
@@ -281,14 +299,18 @@ class WorkBot(object):
 
             src = self.staging_path(wi)
             dst = self.archive_path(wi)
+
             try:
-                iput(src, dst, force=True, verify_checksum=True,
-                     recurse=True)
+                coll = Collection(self.client, dst)
+                if not coll.exists():
+                    imkdir(dst, make_parents=True)
+
+                iput(src, dst, force=True, verify_checksum=True, recurse=True)
                 wi.archived(session)
                 session.commit()
             except RodsError as e:
-                log.error("Failed to archive data "
-                          "from {} to {}: {}".format(src, dst, e))
+                log.error("Failed to archive data for {} "
+                          "from {} to {}: {}".format(wi, src, dst, e))
                 raise
 
     def annotate_output_data(self, session: Session, wi: WorkInstance):
@@ -302,19 +324,25 @@ class WorkBot(object):
         if wi.is_archived():
             log.info("Annotating output data for {}".format(wi))
 
-            meta = session.query(ONTMeta).filter(ONTMeta.workinstance == wi).all()
-            log.info("Got metadata: {}".format(meta))
+            meta = session.query(ONTMeta).\
+                filter(ONTMeta.workinstance == wi).all()
+            log.debug("Got metadata for {}: {}".format(wi, meta))
 
             dst = self.archive_path(wi)
             coll = Collection(self.client, dst)
 
-            for m in meta:
-                coll.meta_add({"attribute": "experiment_name",
-                               "value": m.experiment_name},
-                              {"attribute": "instrument_slot",
-                               "value": str(m.instrument_slot)})
-            wi.annotated(session)
-            session.commit()
+            try:
+                for m in meta:
+                    coll.meta_add({"attribute": "experiment_name",
+                                   "value": m.experiment_name},
+                                  {"attribute": "instrument_slot",
+                                   "value": str(m.instrument_slot)})
+                wi.annotated(session)
+                session.commit()
+            except BatonError as e:
+                log.error("Failed to annotate output data "
+                          "for {}: {}".format(wi, e))
+                raise
 
     def unstage_input_data(self, session: Session, wi: WorkInstance):
         """Unstages the input data from the temporary local directory by
@@ -350,8 +378,9 @@ def add_ont_analyses(session: Session, baton: BatonClient,
 
     try:
         for experiment_name, instrument_slot in experiment_slots:
-            log.info("Experiment {}, instrument slot {}".format(
-                experiment_name, instrument_slot))
+            log.info("Adding analysis for Experiment {}, "
+                     "instrument slot {}".format(experiment_name,
+                                                 instrument_slot))
 
             # We should find in iRODS a single collection for a given
             # experiment and slot. However, if there's more then we can still
@@ -389,8 +418,23 @@ def add_ont_analyses(session: Session, baton: BatonClient,
 
                 session.commit()
                 num_added += 1
-    except SQLAlchemyError:
-        session.rollback()
+    except Exception as e:
+        log.error("Failed to add ne analysis: {}".format(e))
         raise
 
     return num_added
+
+
+def find_work_in_progress(session: Session) -> List[WorkInstance]:
+    """Returns a list of WorkInstances that have not finished i.e. reached
+    a state of either COMPLETED or CANCELLED.
+
+    Args:
+        session: An open session.
+
+    Returns: List[WorkInstance]
+
+    """
+    return session.query(WorkInstance).\
+        join(State).\
+        filter(State.name.notin_([CANCELLED_STATE, COMPLETED_STATE])).all()

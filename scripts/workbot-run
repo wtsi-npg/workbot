@@ -9,4 +9,93 @@
 # - Adding metadata to the results in iRODS
 # - Unstaging the input data
 
-exit(1)
+import argparse
+import logging
+from multiprocessing.pool import ThreadPool
+
+from workbot import get_wb_session
+from workbot.config import CANCELLED_STATE, COMPLETED_STATE, read_config_file
+from workbot.schema import WorkInstance, State
+from workbot.workbot import find_work_in_progress, AnalysisError, WorkBot
+
+description = """"""
+
+parser = argparse.ArgumentParser(
+    description=description,
+    formatter_class=argparse.RawDescriptionHelpFormatter)
+
+
+parser.add_argument("-a", "--archive-root", type=str, required=True,
+                    help="The root iRODS collection under which the results "
+                         "will be stored")
+parser.add_argument("-s", "--staging-root", type=str, required=True,
+                    help="The local directory root under which files will be "
+                         "staged while working")
+parser.add_argument("-t", "--threads", type=int, nargs="?", default=4,
+                    help="The number of threads to use. This will be the "
+                         "number of analyses running in parallel. Optional, "
+                         "defaults to 4. The maximum permitted is 20")
+
+
+parser.add_argument("-d", "--debug",
+                    help="Enable DEBUG level logging to STDERR",
+                    action="store_true")
+parser.add_argument("-v", "--verbose",
+                    help="Enable INFO level logging to STDERR",
+                    action="store_true")
+
+args = parser.parse_args()
+
+log = logging.getLogger("main")
+level = logging.ERROR
+if args.debug:
+    level = logging.DEBUG
+elif args.verbose:
+    level = logging.INFO
+logging.basicConfig(format="%(asctime)s %(levelname)s %(module)s - "
+                           "%(funcName)s - %(message)s", level=level)
+
+
+def fn(fn_args):
+    wid, archive_root, staging_root = fn_args
+
+    sess = get_wb_session()  #
+    wi = sess.query(WorkInstance).filter(WorkInstance.id == wid).one()
+    if wi.is_started():
+        # This is bad and shouldn't happen. We probably crashed after
+        # starting the analysis during a previous run.
+        raise AnalysisError("Found work instance {} "
+                            "in Started state".format(wid))
+
+    log.info("Working on: {}, {} [{}]".format(wi, wi.input_path, wi.state))
+
+    try:
+        wb = WorkBot(archive_root, staging_root)
+        wb.stage_input_data(sess, wi)
+        wb.run_analysis(sess, wi)
+        wb.archive_output_data(sess, wi)
+        wb.annotate_output_data(sess, wi)
+        wb.unstage_input_data(sess, wi)
+        wb.complete_analysis(sess, wi)
+    finally:
+        sess.close()
+
+
+def main():
+    num_threads = args.threads
+    if num_threads > 20:
+        num_threads = 20
+
+    sess = get_wb_session()
+    in_progress = find_work_in_progress(sess)
+
+    fn_args = [(wi.id, args.archive_root, args.staging_root)
+               for wi in in_progress]
+
+    with ThreadPool(num_threads) as p:
+        p.map(fn, fn_args)
+
+
+if __name__ == "__main__":
+    main()
+
