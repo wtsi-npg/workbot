@@ -10,8 +10,8 @@ from workbot.schema import WorkBotDBBase
 
 class ConfigurationError(Exception):
     """Exception raised for errors in the configuration or environment."""
-    def __init__(self):
-        pass
+    def __init__(self, message: str):
+        self.message = message
 
 
 def _init_workbot_db():
@@ -34,6 +34,10 @@ def _init_mlwh_db():
     MLWHBase.metadata.create_all(engine)
 
     return sessionmaker(bind=engine)
+
+# Could use scoped_session to get thread-local sessions and avoid this. See
+# https://docs.sqlalchemy.org/en/13/orm/contextual.html#\
+# sqlalchemy.orm.scoping.scoped_session
 
 
 wb_lock = threading.Lock()
