@@ -299,8 +299,11 @@ def irm(remote_path: str, force=False, recurse=False):
 
 
 def _run(cmd: List[str]):
-    try:
-        log.debug("Running {}".format(cmd))
-        subprocess.run(cmd, capture_output=True, check=True)
-    except subprocess.CalledProcessError as e:
-        raise RodsError(e.stderr.decode("utf-8"))
+    log.debug("Running {}".format(cmd))
+
+    completed = subprocess.run(cmd, capture_output=True)
+    if completed.returncode == 0:
+        return
+
+    raise RodsError(completed.stderr.decode("utf-8").rstrip(), 0)
+
