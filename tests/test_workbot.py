@@ -1,3 +1,4 @@
+import logging
 import os
 from datetime import datetime
 
@@ -8,7 +9,7 @@ from tests.irods_fixture import irods_tmp_coll, baton_session
 from tests.ml_warehouse_fixture import mlwh_session
 from tests.schema_fixture import wb_session
 from workbot.config import PENDING_STATE, CANCELLED_STATE
-from workbot.irods import Collection
+from workbot.irods import Collection, imkdir, iput
 from workbot.ml_warehouse_schema import find_recent_experiment_pos
 from workbot.schema import WorkInstance, State
 from workbot.workbot import WorkBot, AnalysisError, add_ont_analyses
@@ -111,7 +112,7 @@ def test_add_analysis_cancelled(wb_session):
 
 
 @m.context("When ONT experiments are found")
-@m.it("Adds analyses for new ones")
+@m.it("Adds analyses for new ones in a PENDING state")
 def test_add_new_analyses(mlwh_session, wb_session,
                           irods_tmp_coll, baton_session):
     start_date = datetime.fromisoformat("2020-06-16")
@@ -145,3 +146,90 @@ def test_add_new_analyses(mlwh_session, wb_session,
     num_added = add_ont_analyses(wb_session, baton_session, expts)
     # One analysis exists, so another should not be added
     assert num_added == 0
+
+
+@m.context("When an analysis input is present")
+@m.it("Is detected")
+def test_is_input_path_present(wb_session, irods_tmp_coll):
+    archive_root = "/dummy"
+    staging_root = "/dummy"
+    p = os.path.join(irods_tmp_coll, "dummy_input")
+
+    wb = WorkBot(archive_root, staging_root)
+    wi = wb.add_analysis(wb_session, p)
+
+    assert not wb.is_input_path_present(wi)
+    imkdir(p, make_parents=True)
+    assert wb.is_input_path_present(wi)
+
+
+@m.context("When analysis input data are complete")
+@m.it("Is detected")
+def test_is_input_data_complete(wb_session, irods_tmp_coll):
+    archive_root = "/dummy"
+    staging_root = "/dummy"
+    p = os.path.join(irods_tmp_coll, "dummy_input")
+
+    wb = WorkBot(archive_root, staging_root)
+    wi = wb.add_analysis(wb_session, p)
+
+    assert not wb.is_input_data_complete(wi)
+    imkdir(p, make_parents=True)
+    assert not wb.is_input_data_complete(wi)
+    iput("tests/data/gridion/66/DN585561I_A1/"
+         "20190904_1514_GA20000_FAL01979_43578c8f/final_report.txt.gz",
+         os.path.join(p, "final_report.txt.gz"))
+    assert wb.is_input_data_complete(wi)
+
+
+@m.context("When analysis input data are staged")
+@m.it("Is is present in the staging directory")
+def test_stage_input_data(wb_session, irods_tmp_coll, tmp_path):
+    archive_root = os.path.join(irods_tmp_coll, "archive")
+    imkdir(archive_root, make_parents=True)
+    staging_root = tmp_path / "staging"
+
+    wb = WorkBot(archive_root, staging_root)
+    p = os.path.join(irods_tmp_coll, "gridion/66/DN585561I_A1/",
+                                     "20190904_1514_GA20000_FAL01979_43578c8f")
+    wi = wb.add_analysis(wb_session, p)
+    wb.stage_input_data(wb_session, wi)
+
+    # The run collection 20190904_1514_GA20000_FAL01979_43578c8f is the one
+    # annotated with metadata in iRODS, so is the collection that gets staged
+    staging_path = os.path.join(staging_root.as_posix(),str(wi.id),
+                                "20190904_1514_GA20000_FAL01979_43578c8f",)
+    expected_files = ["duty_time.csv",
+                      "fast5_fail",
+                      "fast5_pass",
+                      "fastq_fail",
+                      "fastq_pass",
+                      "final_report.txt.gz",
+                      "final_summary.txt",
+                      "GXB02004_20190904_151413_FAL01979_gridion_"
+                      "sequencing_run_DN585561I_A1_sequencing_summary.txt",
+                      "report.md",
+                      "report.pdf",
+                      "throughput.csv"]
+    for f in expected_files:
+        assert os.path.exists(os.path.join(staging_path, f))
+
+
+# def test_run_analysis():
+#     assert False
+#
+#
+# def test_archive_output_data():
+#     assert False
+#
+#
+# def test_annotate_output_data():
+#     assert False
+#
+#
+# def test_unstage_input_data():
+#     assert False
+#
+#
+# def test_complete_analysis():
+#     assert False

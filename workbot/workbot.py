@@ -3,6 +3,7 @@ import os
 import re
 import shutil
 import subprocess
+from pathlib import Path
 from typing import List, Tuple
 
 from sqlalchemy.orm import Session
@@ -131,6 +132,7 @@ class WorkBot(object):
         wi = WorkInstance(input_path, wtype, pending)
         log.info("Adding work {}".format(wi))
         session.add(wi)
+        session.commit()
 
         return wi
 
@@ -242,6 +244,7 @@ class WorkBot(object):
 
                 src = wi.input_path
                 dst = self.staging_path(wi)
+                Path(dst).mkdir(parents=True, exist_ok=True)
                 try:
                     iget(src, dst, force=True, verify_checksum=True,
                          recurse=True)
