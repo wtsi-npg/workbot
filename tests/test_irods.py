@@ -63,7 +63,7 @@ def test_list_collection_contents(irods_tmp_coll, baton_session):
 
     coll = Collection(baton_session, p)
     contents = coll.list(contents=True)
-    assert len(contents) == 10
+    assert len(contents) == 11
 
 
 @m.it("Can list a data object")
