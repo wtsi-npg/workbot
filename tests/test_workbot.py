@@ -1,5 +1,5 @@
-import logging
 import os
+import unittest
 from datetime import datetime
 
 import pytest
@@ -11,7 +11,7 @@ from tests.schema_fixture import wb_session
 from workbot.config import PENDING_STATE, CANCELLED_STATE
 from workbot.irods import Collection, imkdir, iput
 from workbot.ml_warehouse_schema import find_recent_experiment_pos
-from workbot.schema import WorkInstance, State
+from workbot.schema import WorkInstance
 from workbot.workbot import WorkBot, AnalysisError, add_ont_analyses
 
 #  Stop IDEs "optimizing" away these imports
@@ -117,7 +117,7 @@ def test_add_new_analyses(mlwh_session, wb_session,
                           irods_tmp_coll, baton_session):
     start_date = datetime.fromisoformat("2020-06-16")
 
-    p = os.path.join(irods_tmp_coll, "gridion/66/DN585561I_A1/"
+    p = os.path.join(irods_tmp_coll, "gridion", "66", "DN585561I_A1",
                                      "20190904_1514_GA20000_FAL01979_43578c8f")
     coll = Collection(baton_session, p)
     coll.meta_add({"attribute": "experiment_name",
@@ -174,8 +174,10 @@ def test_is_input_data_complete(wb_session, irods_tmp_coll):
     wi = wb.add_analysis(wb_session, p)
 
     assert not wb.is_input_data_complete(wi)
+
     imkdir(p, make_parents=True)
     assert not wb.is_input_data_complete(wi)
+
     iput("tests/data/gridion/66/DN585561I_A1/"
          "20190904_1514_GA20000_FAL01979_43578c8f/final_report.txt.gz",
          os.path.join(p, "final_report.txt.gz"))
@@ -183,22 +185,28 @@ def test_is_input_data_complete(wb_session, irods_tmp_coll):
 
 
 @m.context("When analysis input data are staged")
-@m.it("Is is present in the staging directory")
+@m.it("Is is present in the staging input directory")
 def test_stage_input_data(wb_session, irods_tmp_coll, tmp_path):
     archive_root = os.path.join(irods_tmp_coll, "archive")
     imkdir(archive_root, make_parents=True)
     staging_root = tmp_path / "staging"
 
-    wb = WorkBot(archive_root, staging_root)
-    p = os.path.join(irods_tmp_coll, "gridion/66/DN585561I_A1/",
+    wb = WorkBot(archive_root, staging_root.as_posix())
+    p = os.path.join(irods_tmp_coll, "gridion", "66", "DN585561I_A1",
                                      "20190904_1514_GA20000_FAL01979_43578c8f")
     wi = wb.add_analysis(wb_session, p)
+
+    assert not wi.is_staged()
     wb.stage_input_data(wb_session, wi)
+    assert wi.is_staged()
 
     # The run collection 20190904_1514_GA20000_FAL01979_43578c8f is the one
     # annotated with metadata in iRODS, so is the collection that gets staged
-    staging_path = os.path.join(staging_root.as_posix(),str(wi.id),
-                                "20190904_1514_GA20000_FAL01979_43578c8f",)
+    staging_in_path = wb.staging_input_path(wi)
+
+    assert staging_in_path == os.path.join(staging_root.as_posix(),
+                                           str(wi.id),
+                                           "input")
     expected_files = ["duty_time.csv",
                       "fast5_fail",
                       "fast5_pass",
@@ -212,20 +220,90 @@ def test_stage_input_data(wb_session, irods_tmp_coll, tmp_path):
                       "report.pdf",
                       "throughput.csv"]
     for f in expected_files:
-        assert os.path.exists(os.path.join(staging_path, f))
+        assert os.path.exists(os.path.join(staging_in_path, f))
 
 
-# def test_run_analysis():
-#     assert False
-#
-#
-# def test_archive_output_data():
-#     assert False
-#
-#
-# def test_annotate_output_data():
-#     assert False
-#
+@m.context("When an analysis is run")
+@m.it("It writes to the staging output directory")
+def test_run_analysis(wb_session, irods_tmp_coll, tmp_path):
+    archive_root = os.path.join(irods_tmp_coll, "archive")
+    imkdir(archive_root, make_parents=True)
+    staging_root = tmp_path / "staging"
+
+    wb = WorkBot(archive_root, staging_root.as_posix())
+    p = os.path.join(irods_tmp_coll, "gridion", "66", "DN585561I_A1",
+                                     "20190904_1514_GA20000_FAL01979_43578c8f")
+    wi = wb.add_analysis(wb_session, p)
+    wb.stage_input_data(wb_session, wi)
+
+    assert not wi.is_succeeded()
+    wb.run_analysis(wb_session, wi)
+    assert wi.is_succeeded()
+
+    staging_out_path = wb.staging_output_path(wi)
+    assert staging_out_path == os.path.join(staging_root.as_posix(),
+                                            str(wi.id),
+                                            "output")
+
+    expected_files = ["ncov2019-artic-nf-done"]
+    for f in expected_files:
+        assert os.path.exists(os.path.join(staging_out_path, f))
+
+
+@m.context("When an analysis is archived")
+@m.it("It writes to the archive collection")
+def test_archive_output_data(wb_session, irods_tmp_coll, tmp_path):
+    archive_root = os.path.join(irods_tmp_coll, "archive")
+    imkdir(archive_root, make_parents=True)
+    staging_root = tmp_path / "staging"
+
+    wb = WorkBot(archive_root, staging_root.as_posix())
+    p = os.path.join(irods_tmp_coll, "gridion", "66", "DN585561I_A1",
+                                     "20190904_1514_GA20000_FAL01979_43578c8f")
+    wi = wb.add_analysis(wb_session, p)
+    wb.add_metadata(wb_session, wi, "experiment_01", 1)
+
+    wb.stage_input_data(wb_session, wi)
+    wb.run_analysis(wb_session, wi)
+
+    assert not wi.is_archived()
+    wb.archive_output_data(wb_session, wi)
+    assert wi.is_archived()
+
+
+@m.context("When an analysis is annotated")
+@m.it("It adds metadata to the archive collection")
+def test_annotate_output_data(wb_session, irods_tmp_coll, tmp_path,
+                              baton_session):
+    archive_root = os.path.join(irods_tmp_coll, "archive")
+    imkdir(archive_root, make_parents=True)
+    staging_root = tmp_path / "staging"
+
+    wb = WorkBot(archive_root, staging_root.as_posix())
+    p = os.path.join(irods_tmp_coll, "gridion", "66", "DN585561I_A1",
+                                     "20190904_1514_GA20000_FAL01979_43578c8f")
+    wi = wb.add_analysis(wb_session, p)
+
+    expt = "experiment_01"
+    pos = 1
+
+    wb.add_metadata(wb_session, wi, expt, pos)
+    wb.stage_input_data(wb_session, wi)
+    wb.run_analysis(wb_session, wi)
+    wb.archive_output_data(wb_session, wi)
+
+    assert not wi.is_annotated()
+    wb.annotate_output_data(wb_session, wi)
+    assert wi.is_annotated()
+
+    archive_path = wb.archive_path(wi)
+    coll = Collection(baton_session, archive_path)
+    assert {"attribute": "experiment_name",
+            "value": expt} in coll.metadata()
+    assert {"attribute": "instrument_slot",
+            "value": str(pos)} in coll.metadata()
+
+
 #
 # def test_unstage_input_data():
 #     assert False

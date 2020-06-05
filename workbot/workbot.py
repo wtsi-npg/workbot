@@ -147,7 +147,10 @@ class WorkBot(object):
             experiment_name: An ONT experiment name.
             instrument_position: An ONT instrument position
         """
+        log.debug("Adding metadata experiment: {}, position: {}".format(
+            experiment_name, instrument_position))
         session.add(ONTMeta(wi, experiment_name, instrument_position))
+        session.commit()
 
     def archive_path(self, wi: WorkInstance) -> str:
         """Returns the iRODS collection where the work instance will store its
@@ -172,6 +175,30 @@ class WorkBot(object):
 
         """
         return os.path.join(self.staging_root, str(wi.id))
+
+    def staging_input_path(self, wi: WorkInstance) -> str:
+        """Returns the local directory in the staging area where data for
+        analysis will be staged. This is typically a directory named 'input'.
+
+        Args:
+            wi: A WorkInstance.
+
+        Returns: str
+
+        """
+        return os.path.join(self.staging_path(wi), "input")
+
+    def staging_output_path(self, wi: WorkInstance) -> str:
+        """Returns the local directory in the staging area where data for
+        archiving will be staged. This is typically a directory named 'output'.
+
+        Args:
+            wi: A WorkInstance.
+
+        Returns: str
+
+        """
+        return os.path.join(self.staging_path(wi), "output")
 
     def is_input_path_present(self, wi: WorkInstance) -> bool:
         """Returns true if the input data path exists.
@@ -244,16 +271,30 @@ class WorkBot(object):
 
                 src = wi.input_path
                 dst = self.staging_path(wi)
+
                 Path(dst).mkdir(parents=True, exist_ok=True)
                 try:
                     iget(src, dst, force=True, verify_checksum=True,
                          recurse=True)
+
+                    # The leaf element of the archive input path will become a
+                    # new directory within the staging path. We need to rename
+                    # it to the generic input path name
+                    d = os.path.basename(src)
+                    tmp_staged = os.path.join(dst, d)
+                    staged = self.staging_input_path(wi)
+
+                    log.debug("Moving staged input data into position "
+                              "from {} to {}".format(tmp_staged, staged))
+                    shutil.move(tmp_staged, staged)
+
                     wi.staged(session)
                     session.commit()
                 except RodsError as e:
                     log.error("Failed to stage input data for {} "
                               "from {} to {}: {}".format(wi, src, dst, e))
                     raise
+        return
 
     def run_analysis(self, session: Session, wi: WorkInstance):
         """Runs the analysis if the data have been staged to the local working
@@ -272,13 +313,22 @@ class WorkBot(object):
                 raise AnalysisError("Failed to find a 'command' value in the "
                                     "'{}' section of the configuration "
                                     "file".format(self.work_type))
+            cmd_str = os.path.abspath(cmd_str)
+
             cmd = cmd_str.split()
+            cmd += ["-i", self.staging_input_path(wi),
+                    "-o", self.staging_output_path(wi),
+                    "-v"]
+
+            dst = self.staging_output_path(wi)
+            Path(dst).mkdir(parents=True, exist_ok=True)
 
             log.info("Running {} for {} ".format(cmd, wi))
             wi.started(session)
             session.commit()
 
-            completed = subprocess.run(cmd, capture_output=True)
+            completed = subprocess.run(cmd, capture_output=True,
+                                       cwd=self.staging_output_path(wi))
             if completed.returncode == 0:
                 wi.succeeded(session)
                 session.commit()
@@ -288,6 +338,7 @@ class WorkBot(object):
                                 "exit code: {}: {}".format(
                                  cmd, wi, completed.returncode,
                                  completed.stderr.decode("utf-8").rstrip()))
+        return
 
     def archive_output_data(self, session: Session, wi: WorkInstance):
         """Archives the analysis results if the analysis completed
@@ -300,7 +351,7 @@ class WorkBot(object):
         if wi.is_succeeded():
             log.info("Archiving output data for {}".format(wi))
 
-            src = self.staging_path(wi)
+            src = self.staging_output_path(wi)
             dst = self.archive_path(wi)
 
             try:
@@ -315,6 +366,7 @@ class WorkBot(object):
                 log.error("Failed to archive data for {} "
                           "from {} to {}: {}".format(wi, src, dst, e))
                 raise
+        return
 
     def annotate_output_data(self, session: Session, wi: WorkInstance):
         """Annotates the archived analysis results if archiving is complete,
@@ -346,6 +398,7 @@ class WorkBot(object):
                 log.error("Failed to annotate output data "
                           "for {}: {}".format(wi, e))
                 raise
+        return
 
     def unstage_input_data(self, session: Session, wi: WorkInstance):
         """Unstages the input data from the temporary local directory by
@@ -357,9 +410,10 @@ class WorkBot(object):
         """
         if wi.is_annotated():
             log.info("Unstaging input data for {}".format(wi))
-            shutil.rmtree(wi.input_path, ignore_errors=True)
+            shutil.rmtree(self.staging_path(wi), ignore_errors=True)
             wi.unstaged(session)
             session.commit()
+        return
 
     def complete_analysis(self, session: Session, wi: WorkInstance):
         """Marks the analysis as complete in the database. No further action
@@ -373,6 +427,7 @@ class WorkBot(object):
             log.info("Completed analysis for {}".format(wi))
             wi.completed(session)
             session.commit()
+        return
 
 
 def add_ont_analyses(session: Session, baton: BatonClient,
