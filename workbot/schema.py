@@ -1,10 +1,10 @@
 import operator
 
-from sqlalchemy import Column, ForeignKey, create_engine
+from sqlalchemy import Column, ForeignKey
 from sqlalchemy import Integer, String, DateTime
 from sqlalchemy.ext.associationproxy import association_proxy
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import relationship, Session, sessionmaker
+from sqlalchemy.orm import relationship, Session
 from sqlalchemy.sql import func
 
 from workbot.config import PENDING_STATE, STARTED_STATE, STAGED_STATE, \
@@ -45,11 +45,7 @@ class State(WorkBotDBBase):
         self.desc = desc
 
     def __repr__(self):
-        return "<State: name={}>".format(self.name)
-
-
-def find_state(session: Session, name: str):
-    return session.query(State).filter(State.name == name).one()
+        return "<State: {}>".format(self.name)
 
 
 class WorkType(WorkBotDBBase):
@@ -69,10 +65,6 @@ class WorkType(WorkBotDBBase):
         return "<WorkType: name={}, desc={}>".format(self.name, self.desc)
 
 
-def find_work_type(session: Session, name: str):
-    return session.query(WorkType).filter(WorkType.name == name).one()
-
-
 class InstrumentType(WorkBotDBBase):
     __tablename__ = 'instrumenttype'
 
@@ -87,16 +79,8 @@ class InstrumentType(WorkBotDBBase):
         self.model = model
 
     def __repr__(self):
-        tmpl = "<InstrumentType: manufacturer={}, model={}>"
+        tmpl = "<InstrumentType: manuf={}, model={}>"
         return tmpl.format(self.manufacturer, self.model)
-
-
-def find_instrument_type(session: Session,
-                         inst_manufacturer: str,
-                         inst_model: str) -> InstrumentType:
-    return session.query(InstrumentType).filter(
-            InstrumentType.manufacturer == inst_manufacturer,
-            InstrumentType.model == inst_model).one()
 
 
 class WorkInstance(WorkBotDBBase):
@@ -116,50 +100,31 @@ class WorkInstance(WorkBotDBBase):
     instrument_type = relationship("InstrumentType")
     instrument_position = Column(Integer, nullable=False)
 
-    instance_states = relationship("InstanceState", backref="instance",
-                                   lazy="joined", cascade="all, delete-orphan")
-    states = association_proxy('instance_states', 'state')
+    state_id = Column(Integer, ForeignKey('state.id'), nullable=False)
+    state = relationship("State")
+
+    created = Column(DateTime(timezone=True), nullable=False,
+                     default=func.now())
+    last_updated = Column(DateTime(timezone=True), nullable=False,
+                          default=func.now())
 
     def __init__(self,
                  inst_type: InstrumentType,
                  inst_position: int,
                  expt_name: str,
-                 work_type: WorkType):
+                 work_type: WorkType,
+                 state: State):
         self.instrument_type = inst_type
         self.instrument_position = inst_position
         self.experiment_name = expt_name
         self.work_type = work_type
+        self.state = state
 
     def __repr__(self):
-        tmpl = "<WorkInstance: id={}, instrument={}, work_type={}, state={}>"
+        tmpl = "<WorkInstance: id={}, instr={}, type={}, state={} " \
+               "created={} updated={}>"
         return tmpl.format(self.id, self.instrument_type, self.work_type.name,
-                           self.state())
-
-    """Return the current state."""
-    def state(self) -> State:
-        if not self.states:
-            return None
-
-        # There may be a better way of doing this. As state associations are
-        # ordered by their rank on the link instance_states table, the
-        # latest i.e. current state of an instance, is the one that sorts last
-        # by rank.
-        istates = self.instance_states
-        istates.sort(key=operator.attrgetter('rank'), reverse=True)
-        return istates[0].state
-
-    """Changes the current state to Pending.
-    
-    Changes state to Pending, if the current state is None.
-    
-    Raises:
-        StateTransitionError: An error occurred changing state.
-    """
-    def pending(self, session: Session):
-        if self.state() is not None:
-            raise StateTransitionError(self.state().name, PENDING_STATE)
-
-        self.update_state(session, PENDING_STATE)
+                           self.state, self.created, self.last_updated)
 
     """Changes the current state to Staged.
 
@@ -169,8 +134,8 @@ class WorkInstance(WorkBotDBBase):
         StateTransitionError: An error occurred changing state.
     """
     def staged(self, session: Session):
-        if self.state() is None or self.state().name != PENDING_STATE:
-            raise StateTransitionError(self.state().name, STAGED_STATE)
+        if self.state is None or self.state.name != PENDING_STATE:
+            raise StateTransitionError(self.state.name, STAGED_STATE)
 
         self.update_state(session, STAGED_STATE)
 
@@ -182,8 +147,8 @@ class WorkInstance(WorkBotDBBase):
         StateTransitionError: An error occurred changing state.
     """
     def failed_staging(self, session: Session):
-        if self.state() is None or self.state().name != PENDING_STATE:
-            raise StateTransitionError(self.state().name, FAILED_STAGING_STATE)
+        if self.state is None or self.state.name != PENDING_STATE:
+            raise StateTransitionError(self.state.name, FAILED_STAGING_STATE)
 
         self.update_state(session, FAILED_STAGING_STATE)
 
@@ -195,8 +160,8 @@ class WorkInstance(WorkBotDBBase):
         StateTransitionError: An error occurred changing state.
     """
     def started(self, session: Session):
-        if self.state() is None or self.state().name != STAGED_STATE:
-            raise StateTransitionError(self.state().name, STARTED_STATE)
+        if self.state is None or self.state.name != STAGED_STATE:
+            raise StateTransitionError(self.state.name, STARTED_STATE)
 
         self.update_state(session, STARTED_STATE)
 
@@ -208,8 +173,8 @@ class WorkInstance(WorkBotDBBase):
         StateTransitionError: An error occurred changing state.
     """
     def succeeded(self, session: Session):
-        if self.state() is None or self.state().name != STARTED_STATE:
-            raise StateTransitionError(self.state().name, SUCCEEDED_STATE)
+        if self.state is None or self.state.name != STARTED_STATE:
+            raise StateTransitionError(self.state.name, SUCCEEDED_STATE)
 
         self.update_state(session, SUCCEEDED_STATE)
 
@@ -221,11 +186,11 @@ class WorkInstance(WorkBotDBBase):
         StateTransitionError: An error occurred changing state.
     """
     def failed(self, session: Session):
-        if self.state() is None:
+        if self.state is None:
             raise StateTransitionError(None, UNSTAGED_STATE)
 
-        if self.state().name != STARTED_STATE:
-            raise StateTransitionError(self.state().name, FAILED_STATE)
+        if self.state.name != STARTED_STATE:
+            raise StateTransitionError(self.state.name, FAILED_STATE)
 
         self.update_state(session, FAILED_STATE)
 
@@ -248,13 +213,13 @@ class WorkInstance(WorkBotDBBase):
         StateTransitionError: An error occurred changing state.
     """
     def unstaged(self, session):
-        if self.state() is None or \
-                self.state().name not in [STAGED_STATE,
-                                          FAILED_STAGING_STATE,
-                                          SUCCEEDED_STATE,
-                                          FAILED_STATE,
-                                          FAILED_UNSTAGING_STATE]:
-            raise StateTransitionError(self.state().name, UNSTAGED_STATE)
+        if self.state is None or \
+                self.state.name not in [STAGED_STATE,
+                                        FAILED_STAGING_STATE,
+                                        SUCCEEDED_STATE,
+                                        FAILED_STATE,
+                                        FAILED_UNSTAGING_STATE]:
+            raise StateTransitionError(self.state.name, UNSTAGED_STATE)
 
         self.update_state(session, UNSTAGED_STATE)
 
@@ -267,10 +232,10 @@ class WorkInstance(WorkBotDBBase):
         StateTransitionError: An error occurred changing state.
     """
     def failed_unstaging(self, session: Session):
-        if self.state() is None or self.state().name not in [STAGED_STATE,
-                                                             SUCCEEDED_STATE,
-                                                             FAILED_STATE]:
-            raise StateTransitionError(self.state().name,
+        if self.state is None or self.state.name not in [STAGED_STATE,
+                                                         SUCCEEDED_STATE,
+                                                         FAILED_STATE]:
+            raise StateTransitionError(self.state.name,
                                        FAILED_UNSTAGING_STATE)
 
         self.update_state(session, FAILED_UNSTAGING_STATE)
@@ -283,56 +248,46 @@ class WorkInstance(WorkBotDBBase):
         StateTransitionError: An error occurred changing state.
     """
     def completed(self, session: Session):
-        if self.state() and self.state().name != UNSTAGED_STATE:
-            raise StateTransitionError(self.state().name, COMPLETED_STATE)
+        if self.state and self.state.name != UNSTAGED_STATE:
+            raise StateTransitionError(self.state.name, COMPLETED_STATE)
 
         self.update_state(session, COMPLETED_STATE)
 
     def update_state(self, session: Session, name: str):
         s = session.query(State).filter(State.name == name).one()
-        self.states.append(s)
+        self.state = s
+        self.last_updated = func.now()
         session.flush()
 
 
-class InstanceState(WorkBotDBBase):
-    __tablename__ = 'instance_state'
-
-    rank = Column(Integer, autoincrement=True, primary_key=True)
-    time = Column(DateTime(timezone=True), nullable=False, default=func.now())
-
-    instance_id = Column(Integer, ForeignKey('workinstance.id'),
-                         nullable=False)
-
-    state_id = Column(Integer, ForeignKey('state.id'), nullable=False)
-    state = relationship("State", lazy="joined")
-
-    def __init__(self,
-                 state: State):
-        self.state = state
-
-    def __repr__(self):
-        tmpl = "<InstanceState: rank={} instance={}, state={}, time={}>"
-        return tmpl.format(self.rank, self.instance_id, self.state, self.time)
+def find_state(session: Session, name: str):
+    return session.query(State).filter(State.name == name).one()
 
 
-def initialize_database(*args, **kwargs):
-    engine = create_engine(*args, **kwargs)
-    WorkBotDBBase.metadata.create_all(engine)
-
-    session_maker = sessionmaker(bind=engine)
-    sess = session_maker()
-
-    initialize_instruments(sess)
-    initialize_worktypes(sess)
-    initialize_states(sess)
-
-    sess.commit()
-    sess.close()
-
-    return True
+def find_work_type(session: Session, name: str):
+    return session.query(WorkType).filter(WorkType.name == name).one()
 
 
-def initialize_states(session):
+def find_instrument_type(session: Session,
+                         inst_manufacturer: str,
+                         inst_model: str) -> InstrumentType:
+    return session.query(InstrumentType).filter(
+            InstrumentType.manufacturer == inst_manufacturer,
+            InstrumentType.model == inst_model).one()
+
+
+def initialize_database(session: Session):
+    """Initializes the database dictionary tables
+
+    Inserts values into the dictionary tables for instrument types, work
+    types and work states."""
+    _initialize_instruments(session)
+    _initialize_worktypes(session)
+    _initialize_states(session)
+    session.commit()
+
+
+def _initialize_states(session):
     states = [
         State(name=PENDING_STATE, desc="Pending any action"),
         State(name=STAGED_STATE, desc="The work data are staged"),
@@ -348,14 +303,14 @@ def initialize_states(session):
     session.add_all(states)
 
 
-def initialize_worktypes(session):
+def _initialize_worktypes(session):
     types = [
         WorkType(name=ARTIC_NEXTFLOW_WORKTYPE, desc="ARTIC NextFlow pipeline")
     ]
     session.add_all(types)
 
 
-def initialize_instruments(session):
+def _initialize_instruments(session):
     types = [
         InstrumentType(manufacturer=OXFORD_NANOPORE, model=GRIDION_MODEL),
         InstrumentType(manufacturer=OXFORD_NANOPORE, model=PROMETHION_MODEL)

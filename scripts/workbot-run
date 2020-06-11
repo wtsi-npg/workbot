@@ -1,0 +1,12 @@
+#!/usr/bin/env python
+
+# This script finds analyses in the workbot database that have not been
+# started and takes them through the steps of:
+#
+# - Staging the input data
+# - Running the analysis
+# - Copying the results to iRODS
+# - Adding metadata to the results in iRODS
+# - Unstaging the input data
+
+exit(1)
