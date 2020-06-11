@@ -1,5 +1,3 @@
-import configparser
-import logging
 import os
 import threading
 
@@ -11,13 +9,8 @@ from workbot.schema import WorkBotDBBase
 
 
 class ConfigurationError(Exception):
-    """Exception raised for errors in the configuration or environment.
-
-    Attributes:
-        message -- explanation of the error
-    """
-
-    def __init__(self, message):
+    """Exception raised for errors in the configuration or environment."""
+    def __init__(self, message: str):
         self.message = message
 
 
@@ -42,6 +35,10 @@ def _init_mlwh_db():
 
     return sessionmaker(bind=engine)
 
+# Could use scoped_session to get thread-local sessions and avoid this. See
+# https://docs.sqlalchemy.org/en/13/orm/contextual.html#\
+# sqlalchemy.orm.scoping.scoped_session
+
 
 wb_lock = threading.Lock()
 WBSession = _init_workbot_db()
@@ -51,6 +48,12 @@ WHSession = _init_mlwh_db()
 
 
 def get_wb_session() -> Session:
+    """Get a new SQL session for the WorkBot database from the factory. This
+    function ensures thread safe access to the SQLAlchemy database engine.
+
+    Returns: Session
+
+    """
     if WBSession is None:
         raise ConfigurationError("The WBDB_URI environment variable is not "
                                  "set. This should be set to the database "
@@ -60,6 +63,12 @@ def get_wb_session() -> Session:
 
 
 def get_wh_session() -> Session:
+    """Get a new SQL session for the ML warehouse database from the factory.
+    This function ensures thread safe access to the SQLAlchemy database engine.
+
+    Returns: Session
+
+    """
     if WHSession is None:
         raise ConfigurationError("The MLWH_URI environment is variable not "
                                  "set. This should be set to the database "

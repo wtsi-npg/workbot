@@ -1,0 +1,84 @@
+#!/bin/bash
+
+set -euo pipefail
+
+usage() {
+  cat 1>&2 << EOF
+
+This is a wrapper to de-plex multiplexed Oxford Nanopore sequencing data
+using qcat (https://github.com/kjsanger/qcat) and pass the de-plexed reads
+to the ncov2019-artic-nf pipeline
+(https://github.com/wtsi-team112/ncov2019-artic-nf)
+
+Usage: $0 -i <input directory>
+          -o <outout directory>
+          [-h] [-v]
+
+
+Options:
+  -h  Print usage and exit.
+
+  -i  The directory path where the input data for qcat are located. This
+      directory must contain all of the multiplexed, compressed fastq files
+      from basecalling.
+
+  -o  The directory path where the output data from the pipeline are to be
+      written.
+
+  -v  Print verbose messages.
+
+
+Example:
+
+  ncov2019-artic-nf -i /data/basecalled -o /data/output
+
+
+
+EOF
+}
+
+# This is currently a placeholder for the pipeline
+
+INPUT_PATH=
+OUTPUT_PATH=
+
+while getopts "hi:o:v" option; do
+  case "$option" in
+    i)
+        INPUT_PATH="$OPTARG"
+        ;;
+    o)
+        OUTPUT_PATH="$OPTARG"
+        ;;
+    h)
+        usage
+        exit 0
+        ;;
+    v)
+        set -x
+        ;;
+    *)
+        usage
+        echo "Invalid argument!"
+        exit 4
+        ;;
+  esac
+done
+
+shift $((OPTIND -1))
+
+if [ -z "$INPUT_PATH" ] ; then
+    usage
+    echo -e "\nERROR:\n  A -i <input path> argument is required"
+    exit 4
+fi
+
+if [ -z "$OUTPUT_PATH" ] ; then
+    usage
+    echo -e "\nERROR:\n  An -o <output path> argument is required"
+    exit 4
+fi
+
+sleep 5
+
+date > "$OUTPUT_PATH/ncov2019-artic-nf-done"

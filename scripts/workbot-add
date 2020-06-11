@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from sqlalchemy.exc import SQLAlchemyError
 
 from workbot import get_wb_session, get_wh_session
-from workbot.config import GRIDION_MODEL
+from workbot.irods import BatonClient
 from workbot.ml_warehouse_schema import find_recent_experiment_pos
 from workbot.workbot import add_ont_analyses
 
@@ -86,14 +86,17 @@ def main():
     finally:
         wh_sess.close()
 
+    baton_client = BatonClient()
     wb_sess = get_wb_session()
     try:
-        add_ont_analyses(wb_sess, GRIDION_MODEL, expts)
+        baton_client.start()
+        add_ont_analyses(wb_sess, baton_client, expts)
     except Exception as e:
         log.error("Failed to add analysis for experiments {}".format(expts))
         raise
     finally:
         wb_sess.close()
+        baton_client.stop()
 
 
 if __name__ == "__main__":
