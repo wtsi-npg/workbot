@@ -2,7 +2,9 @@ dist: bionic
 
 os: linux
 
-services: docker
+services:
+  - docker
+  - mysql
 
 language: python
 
@@ -31,7 +33,6 @@ before_install:
 
 install:
   - .travis/install.sh
-  - pip install -r test-requirements.txt
   
 script:
   - . ~/miniconda/etc/profile.d/conda.sh

@@ -1,5 +1,7 @@
+import urllib
 from configparser import ConfigParser
 from pathlib import Path
+from urllib.parse import quote
 
 import pytest
 from sqlalchemy import create_engine
@@ -51,7 +53,7 @@ def wb_session(request, config, tmp_path):
 def mysql_url(config: ConfigParser):
     """Returns a MySQL URL configured through an ini file.
 
-    The required keys and values are:
+    The keys and values are:
 
     [MySQL]
     user       = <database user, defaults to "workbot">
@@ -59,7 +61,6 @@ def mysql_url(config: ConfigParser):
     ip_address = <database IP address, defaults to "127.0.0.1">
     port       = <database port, defaults to 3306>
     schema     = <database schema, defaults to "workbot">
-
     """
     section = "MySQL"
 
@@ -75,13 +76,12 @@ def mysql_url(config: ConfigParser):
     port = connection_conf.get("port", "3306")
     schema = connection_conf.get("schema", "workbot")
 
-    uri = 'mysql+pymysql://{}:{}@{}:{}/{}'.format(user, password,
-                                                  ip_address, port, schema)
-    return uri
+    return 'mysql+pymysql://{}:{}@{}:{}/{}'.format(user, password,
+                                                   ip_address, port, schema)
 
 
 def sqlite_url(tmp_path: Path):
     """Returns an SQLite URL configured to a temporary path."""
     p = tmp_path / "workbot"
-    uri = 'sqlite:///{}'.format(p)
-    return uri
+    url = 'sqlite:///{}'.format(p)
+    return url
