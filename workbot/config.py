@@ -1,26 +1,26 @@
-# Work types
+# -*- coding: utf-8 -*-
+#
+# Copyright © 2020 Genome Research Ltd. All rights reserved.
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+# @author Keith James <kdj@sanger.ac.uk>
+
 import configparser
 import os
 import pwd
 from pathlib import Path
-
-ARTIC_NEXTFLOW_WORKTYPE = "ARTIC NextFlow"
-
-# Work states
-PENDING_STATE = "Pending"
-STAGED_STATE = "Staged"
-
-
-STARTED_STATE = "Started"
-SUCCEEDED_STATE = "Succeded"
-ARCHIVED_STATE = "Archived"
-ANNOTATED_STATE = "Annotated"
-UNSTAGED_STATE = "Unstaged"
-COMPLETED_STATE = "Complete"
-
-FAILED_STATE = "Failed"
-CANCELLED_STATE = "Cancelled"
-
 
 def get_config_paths():
     config_file = "workbot.ini"
@@ -48,15 +48,15 @@ def get_config_paths():
     return paths
 
 
-def read_config_file():
+def config():
     search = get_config_paths()
 
     for p in search:
         f = Path(p)
         if f.is_file():
-            config = configparser.ConfigParser()
-            config.read(f)
-            return config
+            conf = configparser.ConfigParser()
+            conf.read(f)
+            return conf
 
     raise FileNotFoundError("No configuration file found "
                             "in: {}".format(search))

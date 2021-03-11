@@ -1,0 +1,117 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+#
+# Copyright © 2020 Genome Research Ltd. All rights reserved.
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+# @author Keith James <kdj@sanger.ac.uk>
+
+import argparse
+import logging
+from datetime import datetime, timedelta
+
+from sqlalchemy.exc import SQLAlchemyError
+
+from workbot import get_wb_session, get_wh_session
+from workbot.config import ONT_RUN_METADATA_UPDATE
+from workbot.irods import BatonClient
+from workbot.ml_warehouse_schema import find_recent_ont_pos
+from workbot.workbot import ONTRunMetadataWorkBot
+
+description = """
+Adds new ONT metadata updates to the workbot queue.
+
+
+"""
+
+parser = argparse.ArgumentParser(
+    description=description,
+    formatter_class=argparse.RawDescriptionHelpFormatter
+)
+
+
+def valid_isodate(s: str):
+    try:
+        return datetime.fromisoformat(s)
+    except ValueError:
+        raise argparse.ArgumentTypeError("Invalid date: '{}'.".format(s))
+
+
+parser.add_argument("-e", "--end-date",
+                    help="The latest date of experiment, "
+                         "format YYY-MM-DD[ hh:mm:ss]. "
+                         "Optional, defaults to the current date",
+                    type=valid_isodate,
+                    default=datetime.now())
+parser.add_argument("-s", "--start-date",
+                    help="The earliest date of experiment, "
+                         "format YYY-MM-DD[ hh:mm:ss]. "
+                         "Optional, defaults to 5 days earlier than"
+                         " the end date",
+                    type=valid_isodate)
+
+parser.add_argument("-d", "--debug",
+                    help="Enable DEBUG level logging to STDERR",
+                    action="store_true")
+parser.add_argument("-v", "--verbose",
+                    help="Enable INFO level logging to STDERR",
+                    action="store_true")
+
+args = parser.parse_args()
+
+log = logging.getLogger("main")
+level = logging.ERROR
+if args.debug:
+    level = logging.DEBUG
+elif args.verbose:
+    level = logging.INFO
+logging.basicConfig(format="%(asctime)s %(levelname)s %(module)s - "
+                           "%(funcName)s - %(message)s", level=level)
+
+
+def main():
+    default_start = args.end_date - timedelta(days=5)
+    start_date = args.start_date if args.start_date else default_start
+
+    log.info("Checking for ONT experiments updated between "
+             "{} and {}".format(start_date, args.end_date))
+
+    baton_client = BatonClient()
+    wh_sess = get_wh_session()
+    wb_sess = get_wb_session()
+    try:
+        try:
+            expos = find_recent_ont_pos(wh_sess, start_date)
+        except Exception as e:
+            log.error("Failed to find experiments in the warehouse: {}", e)
+            raise
+
+        w = ONT_RUN_METADATA_UPDATE
+        try:
+            wb = ONTRunMetadataWorkBot(w)
+            num_added = wb.add_work_for_runs(wb_sess, expos)
+            log.info("Added {} {} runs".format(num_added, w))
+        except Exception as e:
+            log.error("Failed to add work for experiments "
+                      "{}: {}".format(expos, e))
+            raise
+    finally:
+        wh_sess.close()
+        wb_sess.close()
+        baton_client.stop()
+
+
+if __name__ == "__main__":
+    main()

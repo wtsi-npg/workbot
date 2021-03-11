@@ -1,21 +1,81 @@
-from sqlalchemy import Column, ForeignKey
-from sqlalchemy import Integer, String, DateTime
+# -*- coding: utf-8 -*-
+#
+# Copyright © 2020 Genome Research Ltd. All rights reserved.
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+# @author Keith James <kdj@sanger.ac.uk>
+
+import os
+from pathlib import Path, PurePath
+from typing import List, Union
+
+import sqlalchemy
+from sqlalchemy import Column, DateTime, Enum, ForeignKey, Integer, String
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import relationship, Session
+from sqlalchemy.orm import Session, relationship
 from sqlalchemy.sql import func
 
-from workbot.config import PENDING_STATE, STARTED_STATE, STAGED_STATE, \
-    SUCCEEDED_STATE, FAILED_STATE, \
-    UNSTAGED_STATE, COMPLETED_STATE, CANCELLED_STATE, \
-    ARTIC_NEXTFLOW_WORKTYPE, ARCHIVED_STATE, ANNOTATED_STATE
+from workbot.enums import WorkState
 
 WorkBotDBBase = declarative_base()
 
 
+class PathString(sqlalchemy.types.TypeDecorator):
+    impl = sqlalchemy.types.String
+
+    @property
+    def python_type(self):
+        return Path
+
+    def process_literal_param(self, value, dialect):
+        return os.fspath(value)
+
+    def process_bind_param(self, value, dialect):
+        return os.fspath(value)
+
+    def process_result_value(self, value, dialect):
+        return PurePath(value)
+
+    def coerce_compared_value(self, op, value):
+        if isinstance(value, PurePath):
+            return os.fspath(value)
+        else:
+            return self
+
+
+class State(WorkBotDBBase):
+    __tablename__ = 'state'
+
+    id = Column(Integer, autoincrement=True, primary_key=True)
+    name = Column(Enum(WorkState,
+                       create_constraint=True,
+                       validate_strings=True), nullable=False)
+    desc = Column(String(1024), nullable=False)
+
+    def __init__(self, ws: WorkState):
+        self.name = ws
+        self.desc = ws.value
+
+    def __repr__(self):
+        return "<State: {}>".format(self.name)
+
+
 class StateTransitionError(Exception):
     def __init__(self,
-                 current: str,
-                 new: str):
+                 current: WorkState,
+                 new: WorkState):
         """Exception raised for errors moving a WorkInstance from one State to
         another.
 
@@ -25,58 +85,22 @@ class StateTransitionError(Exception):
         """
         self.current = current
         self.new = new
-
-        tmpl = "An error occurred changing state: " \
-               "invalid transition from {} to {}"
-        self.message = tmpl.format(self.current, self.new)
+        self.message = "An error occurred changing state: " \
+                       "invalid transition " \
+                       "from {} to {}".format(self.current.name, self.new.name)
 
     def __repr__(self):
         return "<StateTransitionError: {}>".format(self.message)
-
-
-class State(WorkBotDBBase):
-    __tablename__ = 'state'
-
-    id = Column(Integer, autoincrement=True, primary_key=True)
-    name = Column(String(128), nullable=False)
-    desc = Column(String(1024), nullable=False)
-
-    def __init__(self,
-                 name: str,
-                 desc: str):
-        self.name = name
-        self.desc = desc
-
-    def __repr__(self):
-        return "<State: {}>".format(self.name)
-
-
-class WorkType(WorkBotDBBase):
-    __tablename__ = 'worktype'
-
-    id = Column(Integer, autoincrement=True, primary_key=True)
-    name = Column(String(128), nullable=False)
-    desc = Column(String(1024), nullable=False)
-
-    def __init__(self,
-                 name: str,
-                 desc: str):
-        self.name = name
-        self.desc = desc
-
-    def __repr__(self):
-        return "<WorkType: name={}, desc={}>".format(self.name, self.desc)
 
 
 class WorkInstance(WorkBotDBBase):
     __tablename__ = 'workinstance'
 
     id = Column(Integer, autoincrement=True, primary_key=True)
-    input_path = Column(String(2048), nullable=False)
+    input_path = Column(PathString(2048), nullable=False)
     # output_path = Column(String(2048), nullable=True)
 
-    type_id = Column(Integer, ForeignKey('worktype.id'), nullable=False)
-    work_type = relationship("WorkType")
+    work_type = Column(String(128), nullable=False, index=True)
 
     state_id = Column(Integer, ForeignKey('state.id'), nullable=False)
     state = relationship("State")
@@ -87,8 +111,8 @@ class WorkInstance(WorkBotDBBase):
                           default=func.now())
 
     def __init__(self,
-                 input_path: str,
-                 work_type: WorkType,
+                 input_path: Union[Path, str],
+                 work_type: str,
                  state: State):
         """Create a new WorkInstance describing an analysis to do.
 
@@ -98,15 +122,18 @@ class WorkInstance(WorkBotDBBase):
             work_type: A WorkType to perform.
             state: An initial State.
         """
-        self.input_path = input_path
+        self.input_path = Path(os.fspath(input_path))
         self.work_type = work_type
         self.state = state
 
     def __repr__(self):
-        tmpl = "<WorkInstance: id={}, input={}, type={}, state={} " \
-               "created={} updated={}>"
-        return tmpl.format(self.id, self.input_path,  self.work_type.name,
-                           self.state, self.created, self.last_updated)
+        return "<WorkInstance: id={}, " \
+               "input={}, type={}, " \
+               "state={} created={} " \
+               "updated={}>".format(self.id,
+                                    self.input_path, self.work_type,
+                                    self.state, self.created,
+                                    self.last_updated)
 
     """Changes the current state to Staged.
 
@@ -115,11 +142,12 @@ class WorkInstance(WorkBotDBBase):
     Raises:
         StateTransitionError: An error occurred changing state.
     """
-    def staged(self, session: Session):
-        if self.state.name != PENDING_STATE:
-            raise StateTransitionError(self.state.name, STAGED_STATE)
 
-        self._update_state(session, STAGED_STATE)
+    def staged(self, session: Session):
+        if self.state.name != WorkState.PENDING:
+            raise StateTransitionError(self.state.name, WorkState.STAGED)
+
+        self._update_state(session, WorkState.STAGED)
 
     """Changes the current state to Started.
 
@@ -128,11 +156,12 @@ class WorkInstance(WorkBotDBBase):
     Raises:
         StateTransitionError: An error occurred changing state.
     """
-    def started(self, session: Session):
-        if self.state.name != STAGED_STATE:
-            raise StateTransitionError(self.state.name, STARTED_STATE)
 
-        self._update_state(session, STARTED_STATE)
+    def started(self, session: Session):
+        if self.state.name != WorkState.STAGED:
+            raise StateTransitionError(self.state.name, WorkState.STAGED)
+
+        self._update_state(session, WorkState.STARTED)
 
     """Changes the current state to Succeeded.
 
@@ -141,11 +170,12 @@ class WorkInstance(WorkBotDBBase):
     Raises:
         StateTransitionError: An error occurred changing state.
     """
-    def succeeded(self, session: Session):
-        if self.state.name != STARTED_STATE:
-            raise StateTransitionError(self.state.name, SUCCEEDED_STATE)
 
-        self._update_state(session, SUCCEEDED_STATE)
+    def succeeded(self, session: Session):
+        if self.state.name != WorkState.STARTED:
+            raise StateTransitionError(self.state.name, WorkState.STARTED)
+
+        self._update_state(session, WorkState.SUCCEEDED)
 
     """Changes the current state to Archived.
 
@@ -154,11 +184,12 @@ class WorkInstance(WorkBotDBBase):
     Raises:
         StateTransitionError: An error occurred changing state.
     """
-    def archived(self, session: Session):
-        if self.state.name != SUCCEEDED_STATE:
-            raise StateTransitionError(self.state.name, ARCHIVED_STATE)
 
-        self._update_state(session, ARCHIVED_STATE)
+    def archived(self, session: Session):
+        if self.state.name != WorkState.SUCCEEDED:
+            raise StateTransitionError(self.state.name, WorkState.ARCHIVED)
+
+        self._update_state(session, WorkState.ARCHIVED)
 
     """Changes the current state to Annotated.
 
@@ -167,11 +198,12 @@ class WorkInstance(WorkBotDBBase):
     Raises:
         StateTransitionError: An error occurred changing state.
     """
-    def annotated(self, session: Session):
-        if self.state.name != ARCHIVED_STATE:
-            raise StateTransitionError(self.state.name, ANNOTATED_STATE)
 
-        self._update_state(session, ANNOTATED_STATE)
+    def annotated(self, session: Session):
+        if self.state.name != WorkState.ARCHIVED:
+            raise StateTransitionError(self.state.name, WorkState.ANNOTATED)
+
+        self._update_state(session, WorkState.ANNOTATED)
 
     """Changes the current state to Unstaged.
 
@@ -180,11 +212,12 @@ class WorkInstance(WorkBotDBBase):
     Raises:
         StateTransitionError: An error occurred changing state.
     """
-    def unstaged(self, session):
-        if self.state.name not in [STAGED_STATE, ANNOTATED_STATE]:
-            raise StateTransitionError(self.state.name, UNSTAGED_STATE)
 
-        self._update_state(session, UNSTAGED_STATE)
+    def unstaged(self, session):
+        if self.state.name not in [WorkState.STAGED, WorkState.ANNOTATED]:
+            raise StateTransitionError(self.state.name, WorkState.UNSTAGED)
+
+        self._update_state(session, WorkState.UNSTAGED)
 
     """Changes the current state to Completed.
 
@@ -193,11 +226,12 @@ class WorkInstance(WorkBotDBBase):
     Raises:
         StateTransitionError: An error occurred changing state.
     """
-    def completed(self, session: Session):
-        if self.state.name != UNSTAGED_STATE:
-            raise StateTransitionError(self.state.name, COMPLETED_STATE)
 
-        self._update_state(session, COMPLETED_STATE)
+    def completed(self, session: Session):
+        if self.state.name != WorkState.UNSTAGED:
+            raise StateTransitionError(self.state.name, WorkState.COMPLETED)
+
+        self._update_state(session, WorkState.COMPLETED)
 
     """Changes the current state to Failed.
 
@@ -207,11 +241,12 @@ class WorkInstance(WorkBotDBBase):
     Raises:
         StateTransitionError: An error occurred changing state.
     """
-    def failed(self, session: Session):
-        if self.state.name != STARTED_STATE:
-            raise StateTransitionError(self.state.name, FAILED_STATE)
 
-        self._update_state(session, FAILED_STATE)
+    def failed(self, session: Session):
+        if self.state.name != WorkState.STARTED:
+            raise StateTransitionError(self.state.name, WorkState.FAILED)
+
+        self._update_state(session, WorkState.FAILED)
 
     """Changes the current state to Cancelled.
 
@@ -220,40 +255,41 @@ class WorkInstance(WorkBotDBBase):
     Raises:
         StateTransitionError: An error occurred changing state.
     """
+
     def cancelled(self, session: Session):
-        self._update_state(session, CANCELLED_STATE)
+        self._update_state(session, WorkState.CANCELLED)
 
     def is_pending(self):
-        return self.state.name == PENDING_STATE
+        return self.state.name == WorkState.PENDING
 
     def is_staged(self):
-        return self.state.name == STAGED_STATE
+        return self.state.name == WorkState.STAGED
 
     def is_started(self):
-        return self.state.name == STARTED_STATE
+        return self.state.name == WorkState.STARTED
 
     def is_succeeded(self):
-        return self.state.name == SUCCEEDED_STATE
+        return self.state.name == WorkState.SUCCEEDED
 
     def is_archived(self):
-        return self.state.name == ARCHIVED_STATE
+        return self.state.name == WorkState.ARCHIVED
 
     def is_annotated(self):
-        return self.state.name == ANNOTATED_STATE
+        return self.state.name == WorkState.ANNOTATED
 
     def is_unstaged(self):
-        return self.state.name == UNSTAGED_STATE
+        return self.state.name == WorkState.UNSTAGED
 
     def is_completed(self):
-        return self.state.name == COMPLETED_STATE
+        return self.state.name == WorkState.COMPLETED
 
     def is_failed(self):
-        return self.state.name == FAILED_STATE
+        return self.state.name == WorkState.FAILED
 
     def is_cancelled(self):
-        return self.state.name == CANCELLED_STATE
+        return self.state.name == WorkState.CANCELLED
 
-    def _update_state(self, session: Session, name: str):
+    def _update_state(self, session: Session, name: WorkState):
         s = session.query(State).filter(State.name == name).one()
         self.state = s
         self.last_updated = func.now()
@@ -264,7 +300,9 @@ class ONTMeta(WorkBotDBBase):
     """Oxford Nanopore-specific metadata."""
     __tablename__ = 'ontmeta'
 
-    def __init__(self, wi: WorkInstance, experiment_name: str,
+    def __init__(self,
+                 wi: WorkInstance,
+                 experiment_name: str,
                  instrument_slot: int):
         """Create new ONTMeta metadata.
 
@@ -285,16 +323,29 @@ class ONTMeta(WorkBotDBBase):
     instrument_slot = Column(Integer, nullable=False)
 
     def __repr__(self):
-        return "<ONTMeta: experiment: {}, position: {}>".format(
-            self.experiment_name, self.instrument_slot)
+        return "<ONTMeta: experiment: {}, " \
+               "position: {}>".format(self.experiment_name,
+                                      self.instrument_slot)
 
 
-def find_state(session: Session, name: str):
-    return session.query(State).filter(State.name == name).one()
+def find_state(session: Session, ws: WorkState):
+    return session.query(State).filter(State.name == ws).one()
 
 
-def find_work_type(session: Session, name: str):
-    return session.query(WorkType).filter(WorkType.name == name).one()
+def find_work_in_progress(session: Session) -> List[WorkInstance]:
+    """Returns a list of WorkInstances that have not finished i.e. reached
+    a state of either COMPLETED or CANCELLED.
+
+    Args:
+        session: An open session.
+
+    Returns: List[WorkInstance]
+
+    """
+    return session.query(WorkInstance). \
+        join(State). \
+        filter(State.name.notin_([WorkState.CANCELLED,
+                                  WorkState.COMPLETED])).all()
 
 
 def initialize_database(session: Session):
@@ -302,29 +353,10 @@ def initialize_database(session: Session):
 
     Inserts values into the dictionary tables for work types and work
     states."""
-    _initialize_worktypes(session)
+
     _initialize_states(session)
     session.commit()
 
 
 def _initialize_states(session):
-    states = [
-        State(name=PENDING_STATE, desc="Pending any action"),
-        State(name=STAGED_STATE, desc="The work data are staged"),
-        State(name=STARTED_STATE, desc="Work started"),
-        State(name=SUCCEEDED_STATE, desc="Work was done successfully"),
-        State(name=FAILED_STATE, desc="Work has failed"),
-        State(name=ARCHIVED_STATE, desc="Work has been archived"),
-        State(name=ANNOTATED_STATE, desc="Work has been annotated"),
-        State(name=UNSTAGED_STATE, desc="The work data were unstaged"),
-        State(name=COMPLETED_STATE, desc="All actions are complete"),
-        State(name=CANCELLED_STATE, desc="Work was cancelled"),
-    ]
-    session.add_all(states)
-
-
-def _initialize_worktypes(session):
-    types = [
-        WorkType(name=ARTIC_NEXTFLOW_WORKTYPE, desc="ARTIC NextFlow pipeline")
-    ]
-    session.add_all(types)
+    session.add_all([State(s) for s in WorkState])

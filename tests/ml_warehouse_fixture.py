@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from workbot.ml_warehouse_schema import Study, Sample, OseqFlowcell, MLWHBase
+from workbot.ml_warehouse_schema import MLWHBase, OseqFlowcell, Sample, Study
 
 EARLY = datetime(year=2020, month=6, day=1, hour=0, minute=0, second=0)
 LATE = datetime(year=2020, month=6, day=14, hour=0, minute=0, second=0)
@@ -32,8 +32,8 @@ def initialize_mlwh(session: Session):
     for s in range(1, num_samples + 1):
         sid = "sample{}".format(s)
         name = "sample {}".format(s)
-        samples.append(
-            Sample(id_lims="LIMS_01", id_sample_lims=sid, name=name))
+        samples.append(Sample(id_lims="LIMS_01", id_sample_lims=sid,
+                              name=name))
     session.add_all(samples)
     session.flush()
 
@@ -43,7 +43,7 @@ def initialize_mlwh(session: Session):
     for expt in range(1, num_simple_expts + 1):
         for pos in range(1, num_instrument_pos + 1):
             expt_name = "simple_experiment_{:03}".format(expt)
-            id_flowcell = "flowcell {:03}".format(pos + 10)
+            id_flowcell = "flowcell{:03}".format(pos + 10)
 
             # All the even experiments have the early datetime
             # All the odd experiments have the late datetime
@@ -80,7 +80,7 @@ def initialize_mlwh(session: Session):
     for expt in range(1, num_multiplexed_expts + 1):
         for pos in range(1, num_instrument_pos + 1):
             expt_name = "multiplexed_experiment_{:03}".format(expt)
-            id_flowcell = "flowcell {:03}".format(pos + 100)
+            id_flowcell = "flowcell{:03}".format(pos + 100)
 
             # All the even experiments have the early datetime
             when = EARLY
@@ -93,20 +93,22 @@ def initialize_mlwh(session: Session):
                     when = LATEST
 
             for barcode_idx, barcode in enumerate(barcodes):
+                tag_id = "ONT_EXP-012-{:02d}".format(barcode_idx + 1)
+
                 flowcells.append(OseqFlowcell(
-                    sample=samples[msample_idx],
-                    study=study_z,
-                    instrument_name=instrument_name,
-                    instrument_slot=pos,
-                    experiment_name=expt_name,
-                    id_flowcell_lims=id_flowcell,
-                    tag_set_id_lims="ONT_12",
-                    tag_set_name="ONT library barcodes x12",
-                    tag_sequence=barcode,
-                    tag_identifier=barcode_idx + 1,
-                    pipeline_id_lims=pipeline_id_lims,
-                    requested_data_type=req_data_type,
-                    last_updated=when))
+                        sample=samples[msample_idx],
+                        study=study_z,
+                        instrument_name=instrument_name,
+                        instrument_slot=pos,
+                        experiment_name=expt_name,
+                        id_flowcell_lims=id_flowcell,
+                        tag_set_id_lims="ONT_12",
+                        tag_set_name="ONT library barcodes x12",
+                        tag_sequence=barcode,
+                        tag_identifier=tag_id,
+                        pipeline_id_lims=pipeline_id_lims,
+                        requested_data_type=req_data_type,
+                        last_updated=when))
                 msample_idx += 1
 
     session.add_all(flowcells)
@@ -128,4 +130,3 @@ def mlwh_session(tmp_path) -> Session:
 
     yield sess
     sess.close()
-
