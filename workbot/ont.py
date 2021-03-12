@@ -243,9 +243,18 @@ class ONTWorkBroker(WorkBroker):
         self.worbot = workbot
 
     def request_work(self, wb_session=None,
-                     mlwh_session=None, start_date=None) -> int:
+                     mlwh_session=None, start_date=None, zone=None) -> int:
         """Adds work for ONT runs in iRODS whose metadata have been updated in
-        the multi-LIMS  warehouse since a given start datetime.
+        the multi-LIMS  warehouse since a given start datetime. Returns the
+        total number of work instances added.
+
+        Args:
+            wb_session: An open WorkBot Session.
+            mlwh_session: An open multi-LIMS warehouse Session.
+            start_date: A start datetime for the search.
+            zone: An iRODS zone.
+
+        Returns: int
         """
         # DEFINE: We don't always need to check the ML warehouse for recent
         #  changes; just the presence of records should be enough if we are
@@ -253,11 +262,12 @@ class ONTWorkBroker(WorkBroker):
         #  epoch to encompass all LIMS history for these cases?
 
         expos = find_recent_ont_pos(mlwh_session, start_date)
-        return self.__add_work_for_runs(wb_session, expos)
+        return self.__add_work_for_runs(wb_session, expos, zone=zone)
 
     def __add_work_for_runs(self,
                             session: Session,
-                            experiment_slots: List[Tuple]) -> int:
+                            experiment_slots: List[Tuple],
+                            zone=None) -> int:
         """Adds work for ONT runs in iRODS defined by a list of experiment
         name, instrument slot tuples. Returns the total number of
         work instances added.
@@ -269,6 +279,7 @@ class ONTWorkBroker(WorkBroker):
         Args:
             session: An open Session.
             experiment_slots: Experiment, slot tuples.
+            zone: An iRODS zone.
 
         Returns: int
         """
@@ -276,7 +287,7 @@ class ONTWorkBroker(WorkBroker):
 
         try:
             for expt, slot in experiment_slots:
-                n = self.__add_work_for_run(session, expt, slot)
+                n = self.__add_work_for_run(session, expt, slot, zone=zone)
                 log.info("Checked for work for experiment {}, "
                          "instrument slot {} and "
                          "added {} jobs".format(expt, slot, n))
@@ -292,7 +303,8 @@ class ONTWorkBroker(WorkBroker):
     def __add_work_for_run(self,
                            session: Session,
                            experiment_name: str,
-                           instrument_slot: int) -> int:
+                           instrument_slot: int,
+                           zone=None) -> int:
         """Adds work for a particular ONT run in iRODS defined by its
         experiment name and instrument slot. Returns the number of work
         instances added.
@@ -311,7 +323,8 @@ class ONTWorkBroker(WorkBroker):
         avus = [avu.with_namespace(ONTMetadata.namespace) for avu in
                 [AVU(ONTMetadata.EXPERIMENT_NAME.value, experiment_name),
                  AVU(ONTMetadata.INSTRUMENT_SLOT.value, instrument_slot)]]
-        found = self.worbot.rods_handler.meta_query(avus, collection=True)
+        found = self.worbot.rods_handler.meta_query(avus, collection=True,
+                                                    zone=zone)
 
         if not found:
             log.info("No collection in iRODS for "
@@ -319,9 +332,9 @@ class ONTWorkBroker(WorkBroker):
                                                instrument_slot))
             return 0
 
-        log.info("Found {} collections in iRODS for expt: {} pos: {} "
-                 "{}".format(len(found), experiment_name, instrument_slot,
-                             found))
+        log.info("Found {} collections in iRODS zone {} for expt: {} pos: {} "
+                 "{}".format(len(found), zone, experiment_name,
+                             instrument_slot, found))
 
         # DEFINE: This will set up work for all iRODS paths having matching
         #  metadata. Is this the behaviour we want?

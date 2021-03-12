@@ -258,7 +258,7 @@ class BatonClient(object):
 
         item = {BatonClient.AVUS: avus}
         if zone:
-            item[BatonClient.COLL] = zone  # Zone hint
+            item[BatonClient.COLL] = self._zone_hint_to_path(zone)
 
         result = self._execute(BatonClient.METAQUERY, args, item)
 
@@ -318,6 +318,14 @@ class BatonClient(object):
         if BatonClient.OBJ in item:
             return PurePath(item[BatonClient.COLL], item[BatonClient.OBJ])
         return PurePath(item[BatonClient.COLL])
+
+    @staticmethod
+    def _zone_hint_to_path(zone) -> str:
+        z = str(zone)
+        if z.startswith("/"):
+            return z
+
+        return "/" + z
 
 
 class RodsItem(object, metaclass=ABCMeta):

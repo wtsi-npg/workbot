@@ -53,14 +53,16 @@ parser.add_argument("-e", "--end-date",
 parser.add_argument("-s", "--start-date",
                     help="The earliest date of experiment, "
                          "format YYY-MM-DD[ hh:mm:ss]. "
-                         "Optional, defaults to 5 days earlier than"
-                         " the end date",
+                         "Optional, defaults to 5 days earlier than "
+                         "the end date",
                     type=valid_iso_date)
 
 parser.add_argument("-w", "--work-type",
-                    help="The type of work to checked for and added "
+                    help="The type of work to be checked for and added "
                          "if any needs to be done",
                     type=valid_work_type)
+parser.add_argument("-z", "--zone",
+                    help="The iRODS zone to check for data to work on")
 
 parser.add_argument("-d", "--debug",
                     help="Enable DEBUG level logging to STDERR",
@@ -96,7 +98,8 @@ def main():
         br = ONTWorkBroker(wb)
         num_added = br.request_work(wb_sess,
                                     mlwh_session=wh_sess,
-                                    start_date=start_date)
+                                    start_date=start_date,
+                                    zone=args.zone)
 
         log.info("Added {} jobs".format(num_added))
     finally:
