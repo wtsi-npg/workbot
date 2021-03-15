@@ -24,6 +24,7 @@ from datetime import datetime, timedelta
 
 from workbot import get_wb_session, get_wh_session
 from workbot.base import make_workbot
+from workbot.enums import WorkType
 from workbot.ont import ONTWorkBroker
 from workbot.utilities import valid_iso_date, valid_work_type
 
@@ -60,7 +61,7 @@ parser.add_argument("-s", "--start-date",
 parser.add_argument("-w", "--work-type",
                     help="The type of work to be checked for and added "
                          "if any needs to be done",
-                    type=valid_work_type)
+                    type=valid_work_type, required=True)
 parser.add_argument("-z", "--zone",
                     help="The iRODS zone to check for data to work on")
 
