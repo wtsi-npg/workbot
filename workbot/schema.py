@@ -23,6 +23,7 @@ from typing import List, Union
 
 import sqlalchemy
 from sqlalchemy import Column, DateTime, Enum, ForeignKey, Integer, String
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import Session, relationship
 from sqlalchemy.sql import func
@@ -61,7 +62,7 @@ class State(WorkBotDBBase):
     id = Column(Integer, autoincrement=True, primary_key=True)
     name = Column(Enum(WorkState,
                        create_constraint=True,
-                       validate_strings=True), nullable=False)
+                       validate_strings=True), unique=True, nullable=False)
     desc = Column(String(1024), nullable=False)
 
     def __init__(self, ws: WorkState):
@@ -69,7 +70,7 @@ class State(WorkBotDBBase):
         self.desc = ws.value
 
     def __repr__(self):
-        return "<State: {}>".format(self.name)
+        return self.name.name
 
 
 class StateTransitionError(Exception):
@@ -328,8 +329,15 @@ class ONTMeta(WorkBotDBBase):
                                       self.instrument_slot)
 
 
-def find_state(session: Session, ws: WorkState):
-    return session.query(State).filter(State.name == ws).one()
+def find_state(session: Session, ws: WorkState) -> State:
+    """Returns a State from the database corresponding to a member of the
+    WorkState enum."""
+    try:
+        return session.query(State).filter(State.name == ws).one()
+    except SQLAlchemyError as e:
+        log.error("Failed to look up a member of the State dictionary. Has "
+                  "the database been initialised with its dictionaries?")
+        raise e
 
 
 def find_work_in_progress(session: Session) -> List[WorkInstance]:
