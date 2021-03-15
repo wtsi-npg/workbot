@@ -163,6 +163,8 @@ class ONTRunMetadataWorkBot(ONTWorkBot):
                 AVU(ONTMetadata.INSTRUMENT_SLOT.value,
                     meta.instrument_slot)]
         avus = [avu.with_namespace(ONTMetadata.namespace) for avu in avus]
+
+        # These AVUs should be present already
         self.rods_handler.collection(path).meta_add(*avus)
 
         for fc in plex_info:
@@ -173,7 +175,8 @@ class ONTRunMetadataWorkBot(ONTWorkBot):
 
             if fc.tag_index:
                 # This is the barcode directory naming style created by ONT's
-                # Guppy and qcat de-plexers
+                # Guppy and qcat de-plexers. We add information to the
+                # barcode sub-collection.
                 p = path / "barcode{}".format(str(fc.tag_index).zfill(2))
                 log.debug("Annotating iRODS path {} with "
                           "tag index {}".format(p, fc.tag_index))
@@ -182,6 +185,13 @@ class ONTRunMetadataWorkBot(ONTWorkBot):
 
                 coll = self.rods_handler.collection(p)
                 coll.meta_add(AVU("tag_index", fc.tag_index))
+                coll.meta_add(*make_study_metadata(fc.study))
+                coll.meta_add(*make_sample_metadata(fc.sample))
+            else:
+                # There is no tag index, meaning that this is not a
+                # multiplexed run, so we add information to the containing
+                # collection.
+                coll = self.rods_handler.collection(path)
                 coll.meta_add(*make_study_metadata(fc.study))
                 coll.meta_add(*make_sample_metadata(fc.sample))
 
@@ -332,9 +342,9 @@ class ONTWorkBroker(WorkBroker):
                                                instrument_slot))
             return 0
 
-        log.info("Found {} collections in iRODS zone {} for expt: {} pos: {} "
-                 "{}".format(len(found), zone, experiment_name,
-                             instrument_slot, found))
+        log.info("Found {} collections in iRODS zone {} for expt: {}"
+                 " pos: {}".format(len(found), zone, experiment_name,
+                                   instrument_slot))
 
         # DEFINE: This will set up work for all iRODS paths having matching
         #  metadata. Is this the behaviour we want?
