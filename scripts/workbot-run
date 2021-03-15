@@ -31,18 +31,17 @@ import argparse
 import logging
 from multiprocessing.pool import ThreadPool
 
-from sqlalchemy.orm import Session
-
 from workbot import get_wb_session, get_wh_session
-from workbot.schema import WorkInstance
-from workbot.workbot import find_work_in_progress, AnalysisError, \
-    ONTRunMetadataWorkBot
+from workbot.base import AnalysisError, make_workbot
+from workbot.irods import RodsError
+from workbot.schema import WorkInstance, find_work_in_progress
+from workbot.utilities import valid_work_type
 
 description = """"""
 
 parser = argparse.ArgumentParser(
-    description=description,
-    formatter_class=argparse.RawDescriptionHelpFormatter)
+        description=description,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
 
 #
 # parser.add_argument("-a", "--archive-root", type=str, required=True,
@@ -80,34 +79,40 @@ if args.verbose:
     if args.verbose > 2:
         logging.getLogger("sqlalchemy.engine").setLevel(logging.INFO)
 
-
-logging.basicConfig(format="%(asctime)s %(levelname)s %(threadName)s "
-                           "%(module)s - "
-                           "%(funcName)s - %(message)s", level=level)
+logging.basicConfig(format="%(asctime)s %(levelname)s %(threadName)s - "
+                           "%(message)s", level=level)
 
 
-def fn(fn_args):
-    # wid, archive_root, staging_root = fn_args
-    wid = fn_args
-
+def fn(workinstance_id) -> bool:
     sess = get_wb_session()
     mlwh_sess = get_wh_session()
 
+    success = False
     try:
-        wi = sess.query(WorkInstance).filter(WorkInstance.id == wid).one()
+        wi = sess.query(WorkInstance). \
+            filter(WorkInstance.id == workinstance_id).one()
+
         if wi.is_started():
             # This is bad and shouldn't happen. We probably crashed after
-            # starting the analysis during a previous run.
+            # starting the analysis during a previous run. Or possibly more
+            # than one runner has been started on the same database.
             raise AnalysisError("Found work instance {} "
-                                "in Started state".format(wid))
+                                "in Started state".format(workinstance_id))
 
         log.info("Working on: {}, {} [{}]".format(wi, wi.input_path, wi.state))
 
-        wb = ONTRunMetadataWorkBot(wi.work_type.name)
+        wt = valid_work_type(wi.work_type)
+        wb = make_workbot(wt)
         wb.run(sess, wi, mlwh_session=mlwh_sess)
+
+        success = True
+    except RodsError as e:
+        log.error(e.message)
     finally:
         sess.close()
         mlwh_sess.close()
+
+    return success
 
 
 def main():
@@ -116,15 +121,21 @@ def main():
         num_threads = 20
 
     sess = get_wb_session()
-    in_progress = find_work_in_progress(sess)
-    # sess.close()
 
-    # fn_args = [(wi.id, args.archive_root, args.staging_root)
-    #            for wi in in_progress]
-    fn_args = [wi.id for wi in in_progress]
+    try:
+        in_progress = find_work_in_progress(sess)
+        fn_args = [wi.id for wi in in_progress]
 
-    with ThreadPool(num_threads) as p:
-        p.map(fn, fn_args)
+        with ThreadPool(num_threads) as p:
+            succeeded = p.map(fn, fn_args)
+    finally:
+        sess.close()
+
+    num_errors = succeeded.count(False)
+    if num_errors > 0:
+        log.error("Performed {} operations "
+                  "with {} errors".format(len(in_progress), num_errors))
+        exit(1)
 
 
 if __name__ == "__main__":

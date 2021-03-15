@@ -31,13 +31,29 @@ from typing import FrozenSet, List, Union
 from sqlalchemy.orm import Session
 
 from workbot import irods
-from workbot.config import config
+from workbot.config import load_classes_from_config, read_config
 from workbot.enums import WorkState, WorkType
 from workbot.irods import AVU, BatonClient, BatonError, Collection, \
     DataObject, RodsError
 from workbot.schema import State, WorkInstance, find_state
+from workbot.utilities import qualified_class_name
 
 log = logging.getLogger(__name__)
+
+workbot_registry = {}
+
+
+def register(cls: type) -> type:
+    """Class decorator to register Workbot classes for the make_workbot
+     factory function."""
+
+    qualified_name = qualified_class_name(cls)
+    if qualified_name in workbot_registry:
+        raise WorkBotError("WorkBot {} is already "
+                           "registered".format(qualified_name))
+    log.debug("Registering WorkBot class {} as {}".format(cls, qualified_name))
+    workbot_registry[qualified_name] = cls
+    return cls
 
 
 class WorkBotError(Exception):
@@ -244,21 +260,6 @@ class RodsHandler(object):
         irods.iput(local_path, remote_path, **kwargs)
 
 
-workbot_registry = {}
-
-
-def register(cls):
-    """Class decorator to register Workbot classes for the make_workbot
-     factory function."""
-    class_name = cls.__name__
-    if class_name in workbot_registry:
-        raise WorkBotError("WorkBot {} is already "
-                           "registered".format(class_name))
-
-    workbot_registry[class_name] = cls
-    return cls
-
-
 @register
 class WorkBot(object):
     """A WorkBot is an extract, transform, load (ETL,
@@ -269,21 +270,22 @@ class WorkBot(object):
     the results to an archive, annotated with metadata about the process.
     """
 
-    config = config()
+    config = read_config()
     """The configuration read from workbot.ini when the class is loaded."""
 
     def __compatible_work_types(self):
         compat = set()
 
-        name = self.__class__.__name__
+        qualified_name = qualified_class_name(self.__class__)
         for sec in WorkBot.config.sections():
             for key, value in WorkBot.config.items(sec):
-                if key == "class" and value.lower() == name.lower():
+                if key == "class" and value == qualified_name:
                     compat.add(sec)
 
         if not compat:
             raise WorkBotError("Configuration file did not declare any "
-                               "compatible work types for {}".format(name))
+                               "compatible work types "
+                               "for {}".format(qualified_name))
 
         return frozenset(compat)
 
@@ -693,6 +695,7 @@ def make_workbot(work_type: WorkType, **kwargs):
 
     Returns: WorkBot
     """
+    load_classes_from_config(WorkBot.config)
 
     compatible_classes = {}
     for worktype_section in WorkBot.config.sections():
@@ -708,7 +711,8 @@ def make_workbot(work_type: WorkType, **kwargs):
 
     class_name = compatible_classes[key]
     if class_name not in workbot_registry:
-        raise WorkBotError("WorkBot class {} is not known".format(class_name))
+        raise WorkBotError("WorkBot class {} is not known. "
+                           "Known are: ".format(class_name, workbot_registry))
 
     cls = workbot_registry[class_name]
     return cls(key, **kwargs)

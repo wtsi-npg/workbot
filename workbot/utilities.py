@@ -19,18 +19,69 @@
 
 from argparse import ArgumentTypeError
 from datetime import datetime
+from typing import Tuple
 
 from workbot.enums import WorkType
 
 
-def valid_iso_date(s: str):
+def is_builtins_module(module_name: str) -> bool:
+    """Returns true if the named module is the builtins module."""
+    # Refer to the builtin object class
+    return module_name == object.__class__.__module__
+
+
+def parse_qualified_class_name(name: str) -> Tuple[str, str]:
+    """Parses a qualified class name into its module name and unqualified
+    class name parts, which it returns.
+
+    Args:
+        name: A qualified class name.
+
+    Returns: Tuple[str, str]
+    """
+    module_parts = name.split(".")[:-1]
+    module_name = ".".join(module_parts)
+    class_name = name.split(".")[-1]
+
+    return module_name, class_name
+
+
+def qualified_class_name(cls: type) -> str:
+    """Returns the qualified class name of a class."""
+    module = cls.__module__
+    name = cls.__name__
+
+    if module is None:
+        return name
+
+    if is_builtins_module(module):
+        return name
+
+    return ".".join([module, name])
+
+
+def valid_iso_date(s: str) -> datetime:
+    """Parse an ISO date or raise an ArgumentTypeError.
+
+    Args:
+        s: date time.
+
+    Returns: datetime.
+    """
     try:
         return datetime.fromisoformat(s)
     except ValueError:
         raise ArgumentTypeError("Invalid date: '{}'.".format(s))
 
 
-def valid_work_type(s: str):
+def valid_work_type(s: str) -> WorkType:
+    """Parse a work type or  raise an ArgumentTypeError.
+
+    Args:
+        s: A work type name.
+
+    Returns: a WorkType enum member.
+    """
     try:
         wt = WorkType[s]
     except KeyError:
