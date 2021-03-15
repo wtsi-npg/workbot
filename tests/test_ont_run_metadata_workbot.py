@@ -75,6 +75,32 @@ class TestONTRunMetadataWorkBot(object):
         assert num_added == 0
 
     @m.context("When an ONT experiment collection is annotated")
+    @m.context("When the experiment is single-sample")
+    @m.it("Adds sample and study metadata to the run-folder collection")
+    def test_add_new_sample_metadata(self, mlwh_session, wb_session,
+                                     irods_synthetic, baton_session):
+        expt = "simple_experiment_001"
+        pos = 1
+
+        wt = WorkType.ONTRunMetadataUpdate.name
+        wb = ONTRunMetadataWorkBot(wt)
+        p = PurePath(irods_synthetic, expt,
+                     "20190904_1514_GA10000_flowcell011_69126024")
+        wi = wb.add_work(wb_session, p)
+        wb.add_metadata(wb_session, wi,
+                        experiment_name=expt,
+                        instrument_position=pos)
+
+        wb.stage_input_data(wb_session, wi)
+        wb.run_analysis(wb_session, wi)
+        wb.archive_output_data(wb_session, wi)
+        wb.annotate_output_data(wb_session, wi, mlwh_session=mlwh_session)
+
+        coll = Collection(baton_session, PurePath(wi.input_path))
+        assert AVU("sample", "sample 1") in coll.metadata()
+        assert AVU("study_id", "study_02") in coll.metadata()
+        assert AVU("study", "Study Y") in coll.metadata()
+
     @m.context("When the experiment is multiplexed")
     @m.it("Adds {tag_index => <n>} metadata to barcode<0n> sub-collections")
     def test_add_new_plex_metadata(self, mlwh_session, wb_session,
@@ -134,6 +160,7 @@ class TestONTRunMetadataWorkBot(object):
             sid = "sample {}".format(tag_index)
             assert AVU("sample", sid) in bc_coll.metadata()
             assert AVU("study_id", "study_03") in bc_coll.metadata()
+            assert AVU("study", "Study Z") in bc_coll.metadata()
 
     @m.context("When completed")
     @m.it("Can be re-run")
