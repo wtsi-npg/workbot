@@ -1,13 +1,34 @@
-# coding: utf-8
+# -*- coding: utf-8 -*-
+#
+# Copyright © 2020 Genome Research Ltd. All rights reserved.
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+# @author Keith James <kdj@sanger.ac.uk>
+
+import re
 from datetime import datetime
 from typing import List, Tuple
 
-from sqlalchemy import Column, DateTime, ForeignKey, Index, String, Text, \
-    Boolean, Integer, func, distinct
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, \
+    String, Text, distinct, func
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import relationship, Session
+from sqlalchemy.orm import Session, relationship
 
 MLWHBase = declarative_base()
+
+ONTTagIdentifierRegex = re.compile(r'.*-(\d+)$')
 
 
 class Sample(MLWHBase):
@@ -50,7 +71,7 @@ class Sample(MLWHBase):
 
     def __repr__(self):
         return "<Sample: name={}, id_sample_lims={} last_updated={}>".format(
-            self.name, self.id_sample_lims, self.last_updated)
+                self.name, self.id_sample_lims, self.last_updated)
 
 
 class Study(MLWHBase):
@@ -99,7 +120,7 @@ class Study(MLWHBase):
 
     def __repr__(self):
         return "<Study: name={}, id_study_lims={} last_updated={}>".format(
-            self.name, self.id_study_lims, self.last_updated)
+                self.name, self.id_study_lims, self.last_updated)
 
 
 class OseqFlowcell(MLWHBase):
@@ -116,11 +137,11 @@ class OseqFlowcell(MLWHBase):
     instrument_slot = Column(Integer, nullable=False)
     tag_set_id_lims = Column(String, nullable=True)
     tag_set_name = Column(String, nullable=True)
-    tag_identifier = Column(Integer, nullable=True)
+    tag_identifier = Column(String, nullable=True)
     tag_sequence = Column(String, nullable=True)
     tag2_set_id_lims = Column(String, nullable=True)
     tag2_set_name = Column(String, nullable=True)
-    tag2_identifier = Column(Integer, nullable=True)
+    tag2_identifier = Column(String, nullable=True)
     tag2_sequence = Column(String, nullable=True)
     pipeline_id_lims = Column(String, nullable=False)
     requested_data_type = Column(String, nullable=False)
@@ -129,6 +150,24 @@ class OseqFlowcell(MLWHBase):
 
     sample = relationship('Sample')
     study = relationship('Study')
+
+    @property
+    def tag_index(self):
+        if self.tag_identifier:
+            m = ONTTagIdentifierRegex.match(self.tag_identifier)
+            if m:
+                return int(m.group(1))
+
+        return None
+
+    @property
+    def tag2_index(self):
+        if self.tag2_identifier:
+            m = ONTTagIdentifierRegex.match(self.tag2_identifier)
+            if m:
+                return int(m.group(1))
+
+        return None
 
     def __repr__(self):
         return "<OseqFlowcell: inst_name={}, inst_slot={} " \
@@ -141,8 +180,8 @@ class OseqFlowcell(MLWHBase):
                                          self.last_updated)
 
 
-def find_recent_experiments(session: Session,
-                            since: datetime) -> List[str]:
+def find_recent_ont_expt(session: Session,
+                         since: datetime) -> List[str]:
     """Finds recent ONT experiments in the ML warehouse database.
 
     Finds ONT experiments in the ML warehouse database that have been updated
@@ -159,7 +198,7 @@ def find_recent_experiments(session: Session,
         List of matching experiment name strings
     """
 
-    result = session.query(distinct(OseqFlowcell.experiment_name)).\
+    result = session.query(distinct(OseqFlowcell.experiment_name)). \
         filter(OseqFlowcell.last_updated >= since).all()
 
     # The default behaviour of SQLAlchemy is that the result here is a list
@@ -170,8 +209,8 @@ def find_recent_experiments(session: Session,
     return [value for value, in result]
 
 
-def find_recent_experiment_pos(session: Session,
-                               since: datetime) -> List[Tuple]:
+def find_recent_ont_pos(session: Session,
+                        since: datetime) -> List[Tuple]:
     """Finds recent ONT experiments and instrument positions in the ML
     warehouse database.
 
@@ -187,9 +226,22 @@ def find_recent_experiment_pos(session: Session,
     """
 
     return session.query(OseqFlowcell.experiment_name,
-                         OseqFlowcell.instrument_slot).\
-        filter(OseqFlowcell.last_updated >= since).\
+                         OseqFlowcell.instrument_slot). \
+        filter(OseqFlowcell.last_updated >= since). \
         group_by(OseqFlowcell.experiment_name,
-                 OseqFlowcell.instrument_slot).\
+                 OseqFlowcell.instrument_slot). \
         order_by(OseqFlowcell.experiment_name.asc(),
                  OseqFlowcell.instrument_slot.asc()).all()
+
+
+def find_ont_plex_info(session: Session, experiment_name: str,
+                       instrument_slot: int) -> List[OseqFlowcell]:
+    flowcells = session.query(OseqFlowcell). \
+        filter(OseqFlowcell.experiment_name == experiment_name,
+               OseqFlowcell.instrument_slot == instrument_slot). \
+        order_by(OseqFlowcell.experiment_name.asc(),
+                 OseqFlowcell.instrument_slot.asc(),
+                 OseqFlowcell.tag_identifier.asc(),
+                 OseqFlowcell.tag2_identifier.asc()).all()
+
+    return flowcells

@@ -1,4 +1,22 @@
 #!/usr/bin/env python
+# -*- coding: utf-8 -*-
+#
+# Copyright © 2020 Genome Research Ltd. All rights reserved.
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+# @author Keith James <kdj@sanger.ac.uk>
 
 # This script finds analyses in the workbot database that have not been
 # started and takes them through the steps of:
@@ -13,10 +31,12 @@ import argparse
 import logging
 from multiprocessing.pool import ThreadPool
 
-from workbot import get_wb_session
-from workbot.config import CANCELLED_STATE, COMPLETED_STATE, read_config_file
-from workbot.schema import WorkInstance, State
-from workbot.workbot import find_work_in_progress, AnalysisError, WorkBot
+from sqlalchemy.orm import Session
+
+from workbot import get_wb_session, get_wh_session
+from workbot.schema import WorkInstance
+from workbot.workbot import find_work_in_progress, AnalysisError, \
+    ONTRunMetadataWorkBot
 
 description = """"""
 
@@ -24,25 +44,24 @@ parser = argparse.ArgumentParser(
     description=description,
     formatter_class=argparse.RawDescriptionHelpFormatter)
 
-
-parser.add_argument("-a", "--archive-root", type=str, required=True,
-                    help="The root iRODS collection under which the results "
-                         "will be stored")
-parser.add_argument("-s", "--staging-root", type=str, required=True,
-                    help="The local directory root under which files will be "
-                         "staged while working")
+#
+# parser.add_argument("-a", "--archive-root", type=str, required=True,
+#                     help="The root iRODS collection under which the results "
+#                          "will be stored")
+# parser.add_argument("-s", "--staging-root", type=str, required=True,
+#                     help="The local directory root under which files will be "
+#                          "staged while working")
 parser.add_argument("-t", "--threads", type=int, nargs="?", default=4,
                     help="The number of threads to use. This will be the "
                          "number of analyses running in parallel. Optional, "
                          "defaults to 4. The maximum permitted is 20")
-
 
 parser.add_argument("-d", "--debug",
                     help="Enable DEBUG level logging to STDERR",
                     action="store_true")
 parser.add_argument("-v", "--verbose",
                     help="Enable INFO level logging to STDERR",
-                    action="store_true")
+                    action='count')
 
 args = parser.parse_args()
 
@@ -50,35 +69,45 @@ log = logging.getLogger("main")
 level = logging.ERROR
 if args.debug:
     level = logging.DEBUG
-elif args.verbose:
+    logging.getLogger("workbot").setLevel(logging.DEBUG)
+
+if args.verbose:
     level = logging.INFO
-logging.basicConfig(format="%(asctime)s %(levelname)s %(module)s - "
+
+    if args.verbose > 1:
+        logging.getLogger("workbot").setLevel(logging.INFO)
+
+    if args.verbose > 2:
+        logging.getLogger("sqlalchemy.engine").setLevel(logging.INFO)
+
+
+logging.basicConfig(format="%(asctime)s %(levelname)s %(threadName)s "
+                           "%(module)s - "
                            "%(funcName)s - %(message)s", level=level)
 
 
 def fn(fn_args):
-    wid, archive_root, staging_root = fn_args
+    # wid, archive_root, staging_root = fn_args
+    wid = fn_args
 
-    sess = get_wb_session()  #
-    wi = sess.query(WorkInstance).filter(WorkInstance.id == wid).one()
-    if wi.is_started():
-        # This is bad and shouldn't happen. We probably crashed after
-        # starting the analysis during a previous run.
-        raise AnalysisError("Found work instance {} "
-                            "in Started state".format(wid))
-
-    log.info("Working on: {}, {} [{}]".format(wi, wi.input_path, wi.state))
+    sess = get_wb_session()
+    mlwh_sess = get_wh_session()
 
     try:
-        wb = WorkBot(archive_root, staging_root)
-        wb.stage_input_data(sess, wi)
-        wb.run_analysis(sess, wi)
-        wb.archive_output_data(sess, wi)
-        wb.annotate_output_data(sess, wi)
-        wb.unstage_input_data(sess, wi)
-        wb.complete_analysis(sess, wi)
+        wi = sess.query(WorkInstance).filter(WorkInstance.id == wid).one()
+        if wi.is_started():
+            # This is bad and shouldn't happen. We probably crashed after
+            # starting the analysis during a previous run.
+            raise AnalysisError("Found work instance {} "
+                                "in Started state".format(wid))
+
+        log.info("Working on: {}, {} [{}]".format(wi, wi.input_path, wi.state))
+
+        wb = ONTRunMetadataWorkBot(wi.work_type.name)
+        wb.run(sess, wi, mlwh_session=mlwh_sess)
     finally:
         sess.close()
+        mlwh_sess.close()
 
 
 def main():
@@ -88,9 +117,11 @@ def main():
 
     sess = get_wb_session()
     in_progress = find_work_in_progress(sess)
+    # sess.close()
 
-    fn_args = [(wi.id, args.archive_root, args.staging_root)
-               for wi in in_progress]
+    # fn_args = [(wi.id, args.archive_root, args.staging_root)
+    #            for wi in in_progress]
+    fn_args = [wi.id for wi in in_progress]
 
     with ThreadPool(num_threads) as p:
         p.map(fn, fn_args)
@@ -98,4 +129,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

@@ -2,21 +2,29 @@ dist: bionic
 
 os: linux
 
-services: docker
+services:
+  - docker
+  - mysql
 
 language: python
 
 python:
-  - 3.7
   - 3.8
+
+_iRODS_4_2_8: &iRODS_4_2_8
+  env: DOCKER_IMAGE=wsinpg/ub-18.04-irods-4.2.8:latest IRODS_VERSION="==4.2.8" BATON_VERSION=">2.0.1"
 
 env:
   global:
-    - BATON_VERSION=2.0.1
+    - WSI_CONDA_CHANNEL=https://dnap.cog.sanger.ac.uk/npg/conda/devel/generic/
 
-  matrix:
-    - DOCKER_IMAGE=wsinpg/ub-16.04-irods-4.2:latest
-    - DOCKER_IMAGE=wsinpg/ub-12.04-irods-4.1:latest
+jobs:
+  include:
+    - env: DOCKER_IMAGE=wsinpg/ub-16.04-irods-4.2.7:latest IRODS_VERSION="==4.2.7" BATON_VERSION=">2.0.1"
+    - <<: *iRODS_4_2_8
+
+  allow_failures:
+    - <<: *iRODS_4_2_8
 
 before_install:
   - docker pull "$DOCKER_IMAGE"
@@ -25,7 +33,6 @@ before_install:
 
 install:
   - .travis/install.sh
-  - pip install -r test-requirements.txt
   
 script:
   - . ~/miniconda/etc/profile.d/conda.sh

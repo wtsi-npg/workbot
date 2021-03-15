@@ -11,7 +11,7 @@ to the ncov2019-artic-nf pipeline
 (https://github.com/wtsi-team112/ncov2019-artic-nf)
 
 Usage: $0 -i <input directory>
-          -o <outout directory>
+          -o <output directory>
           [-h] [-v]
 
 
