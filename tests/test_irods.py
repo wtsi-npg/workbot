@@ -47,7 +47,7 @@ class TestBatonClient(object):
     @m.it("Can list a collection (non-recursively)")
     def test_list_collection(self, irods_gridion, baton_session):
         coll = Collection(baton_session, irods_gridion)
-        assert coll.list() == PurePath(irods_gridion)
+        assert coll.list() == Collection(baton_session, irods_gridion)
 
         coll = Collection(baton_session, "/no/such/collection")
         with pytest.raises(RodsError, match="does not exist"):
@@ -69,7 +69,7 @@ class TestBatonClient(object):
                      "final_summary.txt")
 
         obj = DataObject(baton_session, p)
-        assert obj.list() == p
+        assert obj.list() == DataObject(baton_session, p)
 
         obj = DataObject(baton_session, "/no/such/data_object.txt")
         with pytest.raises(RodsError, match="does not exist"):
@@ -142,7 +142,7 @@ class TestBatonClient(object):
 
         found = baton_session.meta_query([avu], collection=True,
                                          zone=irods_gridion)
-        assert found == [p]
+        assert found == [Collection(baton_session, p)]
 
 
 @m.describe("Collection")

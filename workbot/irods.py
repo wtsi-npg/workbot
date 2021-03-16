@@ -21,7 +21,8 @@ import json
 import logging
 import subprocess
 from abc import ABCMeta, abstractmethod
-from pathlib import PurePath
+from os import PathLike
+from pathlib import Path, PurePath
 from typing import Any, Dict, List, Union
 
 log = logging.getLogger(__package__)
@@ -190,7 +191,7 @@ class BatonClient(object):
     def __init__(self):
         self.proc = None
 
-    def is_running(self):
+    def is_running(self) -> bool:
         """Returns true if the client is running."""
         return self.proc and self.proc.poll() is None
 
@@ -226,7 +227,7 @@ class BatonClient(object):
         self.proc = None
 
     def list(self, item: Dict, acl=False, avu=False, contents=False,
-             recurse=False, size=False, timestamp=False):
+             recurse=False, size=False, timestamp=False) -> List[dict]:
         if recurse:
             raise NotImplementedError("recurse")
 
@@ -235,8 +236,9 @@ class BatonClient(object):
 
         result = self._execute(BatonClient.LIST, args, item)
         if contents:
-            contents = result[BatonClient.CONTENTS]
-            result = [self._item_to_path(x) for x in contents]
+            result = result[BatonClient.CONTENTS]
+        else:
+            result = [result]
 
         return result
 
@@ -261,8 +263,7 @@ class BatonClient(object):
             item[BatonClient.COLL] = self._zone_hint_to_path(zone)
 
         result = self._execute(BatonClient.METAQUERY, args, item)
-
-        return [self._item_to_path(x) for x in result]
+        return [make_rods_item(self, item) for item in result]
 
     def _execute(self, operation: str, args: Dict, item: Dict):
         if not self.is_running():
@@ -314,12 +315,6 @@ class BatonClient(object):
         return json.loads(resp, object_hook=as_baton)
 
     @staticmethod
-    def _item_to_path(item: Dict) -> str:
-        if BatonClient.OBJ in item:
-            return PurePath(item[BatonClient.COLL], item[BatonClient.OBJ])
-        return PurePath(item[BatonClient.COLL])
-
-    @staticmethod
     def _zone_hint_to_path(zone) -> str:
         z = str(zone)
         if z.startswith("/"):
@@ -328,8 +323,9 @@ class BatonClient(object):
         return "/" + z
 
 
-class RodsItem(object, metaclass=ABCMeta):
-    """A base class for iRODS path entities."""
+class RodsItem(PathLike):
+    """A base class for iRODS path entities.
+    """
 
     def __init__(self, client: BatonClient, path: Union[PurePath, str]):
         self.client = client
@@ -359,11 +355,11 @@ class RodsItem(object, metaclass=ABCMeta):
         return len(to_add)
 
     def metadata(self):
-        val = self._list(avu=True)
-        if BatonClient.AVUS not in val.keys():
+        item = self._list(avu=True).pop()
+        if BatonClient.AVUS not in item.keys():
             raise BatonError("{} key missing "
-                             "from {}".format(BatonClient.AVUS, val))
-        return val[BatonClient.AVUS]
+                             "from {}".format(BatonClient.AVUS, item))
+        return item[BatonClient.AVUS]
 
     @abstractmethod
     def _to_dict(self):
@@ -382,25 +378,32 @@ class DataObject(RodsItem):
         self.name = PurePath(remote_path).name
 
     def list(self):
-        val = self._list()
-        if BatonClient.COLL not in val.keys():
+        """Return a new DataObject """
+        item = self._list().pop()
+        if BatonClient.OBJ not in item.keys():
             raise BatonError("{} key missing "
-                             "from {}".format(BatonClient.COLL, val))
-        if BatonClient.OBJ not in val.keys():
-            raise BatonError("{} key missing "
-                             "from {}".format(BatonClient.OBJ, val))
+                             "from {}".format(BatonClient.OBJ, item))
 
-        return PurePath(val[BatonClient.COLL], val[BatonClient.OBJ])
+        return make_rods_item(self.client, item)
 
-    def _list(self, **kwargs):
+    def _list(self, **kwargs) -> List[dict]:
         item = self._to_dict()
         return self.client.list(item, **kwargs)
 
-    def _to_dict(self):
+    def _to_dict(self) -> Dict:
         return {BatonClient.COLL: self.path, BatonClient.OBJ: self.name}
 
+    def __eq__(self, other):
+        if not isinstance(other, DataObject):
+            return False
+
+        return self.path == other.path and self.name == other.name
+
+    def __fspath__(self):
+        return self.__repr__()
+
     def __repr__(self):
-        return "<Data object: {}/{}>".format(self.path, self.name)
+        return PurePath(self.path, self.name).as_posix()
 
 
 class Collection(RodsItem):
@@ -410,27 +413,45 @@ class Collection(RodsItem):
         super().__init__(client, path)
 
     def list(self, acl=False, avu=False, contents=False, recurse=False):
-        val = self._list(acl=acl, avu=avu, contents=contents, recurse=recurse)
-
+        items = self._list(acl=acl, avu=avu, contents=contents,
+                           recurse=recurse)
         # Gets a list
         if contents:
-            return val
+            return [make_rods_item(self.client, item) for item in items]
 
         # Gets a single item
-        if BatonClient.COLL not in val.keys():
-            raise BatonError("{} key missing "
-                             "from {}".format(BatonClient.COLL, val))
+        return make_rods_item(self.client, items.pop())
 
-        return PurePath(val[BatonClient.COLL])
-
-    def _list(self, **kwargs):
+    def _list(self, **kwargs) -> List[dict]:
         return self.client.list({BatonClient.COLL: self.path}, **kwargs)
 
     def _to_dict(self):
         return {BatonClient.COLL: self.path}
 
+    def __eq__(self, other):
+        if not isinstance(other, Collection):
+            return False
+
+        return self.path == other.path
+
+    def __fspath__(self):
+        return self.__repr__()
+
     def __repr__(self):
-        return "<Collection: {}>".format(self.path)
+        return self.path.as_posix()
+
+
+def make_rods_item(client: BatonClient, item: Dict) -> RodsItem:
+    """Return a new Collection or DataObject as appropriate for a dictionary
+    returned by a BatonClient."""
+    if BatonClient.COLL not in item.keys():
+        raise BatonError("{} key missing "
+                         "from {}".format(BatonClient.COLL, item))
+
+    if BatonClient.OBJ in item.keys():
+        return DataObject(client, PurePath(item[BatonClient.COLL],
+                                           item[BatonClient.OBJ]))
+    return Collection(client, PurePath(item[BatonClient.COLL]))
 
 
 def imkdir(remote_path: Union[PurePath, str], make_parents=True):
