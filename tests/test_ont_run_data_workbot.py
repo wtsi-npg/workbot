@@ -43,7 +43,7 @@ class TestONTRunDataWorkBot(object):
     def test_make_workbot_ont_run_data_endstate(self):
         work_type = WorkType.ARTICNextflow.name
         assert ONTRunDataWorkBot(work_type). \
-                   end_states == [WorkState.CANCELLED, WorkState.COMPLETED]
+            end_states == [WorkState.CANCELLED, WorkState.COMPLETED]
 
     @m.context("When ONT experiments are found")
     @m.it("Adds analyses for new ones in a PENDING state")

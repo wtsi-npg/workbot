@@ -23,8 +23,9 @@ import logging
 from datetime import datetime, timedelta
 
 from workbot import get_wb_session, get_wh_session
-from workbot.base import make_workbot
+from workbot.base import WorkBotError, make_workbot
 from workbot.enums import WorkType
+from workbot.irods import RodsError
 from workbot.ont import ONTWorkBroker
 from workbot.utilities import valid_iso_date, valid_work_type
 
@@ -94,18 +95,33 @@ def main():
     wh_sess = get_wh_session()
     wb_sess = get_wb_session()
 
+    success = False
     try:
         wb = make_workbot(args.work_type)
-        br = ONTWorkBroker(wb)
-        num_added = br.request_work(wb_sess,
-                                    mlwh_session=wh_sess,
-                                    start_date=start_date,
-                                    zone=args.zone)
+
+        if not wb.has_broker():
+            raise WorkBotError("The kind of work you have requested ({}) "
+                               "doesn't have a suitable broker available to "
+                               "find new work. You will need to "
+                               "write one.".format(args.work_type))
+
+        num_added = wb.use_broker(wb_sess,
+                                  mlwh_session=wh_sess,
+                                  start_date=start_date,
+                                  zone=args.zone)
 
         log.info("Added {} jobs".format(num_added))
+        success = True
+    except RodsError as e:
+        log.error(e.message)
+    except WorkBotError as e:
+        log.error(e)
     finally:
         wh_sess.close()
         wb_sess.close()
+
+    if not success:
+        exit(1)
 
 
 if __name__ == "__main__":
