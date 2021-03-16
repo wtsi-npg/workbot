@@ -260,6 +260,27 @@ class RodsHandler(object):
         irods.iput(local_path, remote_path, **kwargs)
 
 
+class WorkBroker(object, metaclass=ABCMeta):
+    """A broker responsible for finding work to be done and queueing it in the
+    WorkBot database.
+
+    Some WorkBot types may provide a WorkBroker to more easily find and add
+    work.
+    """
+
+    @abstractmethod
+    def request_work(self, session: Session, **kwargs) -> int:
+        """Queues new work in the WorkBot database and returns the number of
+        work instances added, which may be zero if all work is already queued.
+
+        Args:
+            session: An open Session.
+
+        Returns: int
+        """
+        pass
+
+
 @register
 class WorkBot(object):
     """A WorkBot is an extract, transform, load (ETL,
@@ -299,6 +320,10 @@ class WorkBot(object):
     Data should not be placed in the staging root, but in a subdirectory under
     it."""
 
+    work_broker: WorkBroker
+    """A broker capable of finding new work to be done and adding it to the 
+    database."""
+
     work_type: str
     """The type of work done. This allows the WorkBot to recognise suitable 
     work in the database"""
@@ -314,6 +339,7 @@ class WorkBot(object):
                  archive_root: Union[PurePath, str] = None,
                  staging_root: Union[Path, str] = None,
                  rods_handler: RodsHandler = None,
+                 work_broker: WorkBroker = None,
                  end_states: List[WorkState] = None):
         """
         Args:
@@ -366,13 +392,29 @@ class WorkBot(object):
             rods_handler = RodsHandler()
         self.rods_handler = rods_handler
 
+        self.work_broker = work_broker
+
         if end_states is None:
             end_states = [WorkState.CANCELLED, WorkState.COMPLETED]
         self.end_states = end_states
 
+    def has_broker(self) -> bool:
+        """Returns true if the WorkBot has a broker available."""
+        return self.work_broker is not None
+
+    def use_broker(self, session: Session, **kwargs) -> int:
+        """Uses a broker to find work, if one is available. Raises WorkBotError
+        if none is available. Returns the number of work instances added,
+        which may be zero if all work is already queued.
+
+        Returns: int"""
+        if not self.has_broker():
+            raise WorkBotError("No broker is available")
+
+        return self.work_broker.request_work(session, **kwargs)
+
     def compatible_work_types(self) -> FrozenSet[str]:
         """Returns the set of work types supported by this class."""
-
         return self.__compatible_work_types()
 
     def find_work(self,
@@ -383,7 +425,8 @@ class WorkBot(object):
         """Finds work instances in the WorkBot database.
 
         Finds work instances in the WorkBot database, optionally limited to
-        those in specified states.
+        those in specified states. This is existing work, already scheduled
+        to be done, rather than new work to be added to the database.
 
         Args:
             session: An open Session.
@@ -716,21 +759,3 @@ def make_workbot(work_type: WorkType, **kwargs):
 
     cls = workbot_registry[class_name]
     return cls(key, **kwargs)
-
-
-class WorkBroker(object, metaclass=ABCMeta):
-    """A broker responsible for finding work to be done and queueing it in the
-    WorkBot database.
-    """
-
-    @abstractmethod
-    def request_work(self, session: Session, **kwargs) -> int:
-        """Queues new work in the WorkBot database and returns the number of
-        work instances added, which may be zero if all work is already queued.
-
-        Args:
-            session: An open Session.
-
-        Returns: int
-        """
-        pass

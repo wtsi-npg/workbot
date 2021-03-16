@@ -82,7 +82,8 @@ class ONTRunDataWorkBot(ONTWorkBot):
         super().__init__(work_type=work_type,
                          archive_root=archive_root,
                          staging_root=staging_root,
-                         rods_handler=ONTRodsHandler())
+                         rods_handler=ONTRodsHandler(),
+                         work_broker=ONTWorkBroker(self))
 
     @annotate_op
     def annotate_output_data(self, session: Session, wi: WorkInstance):
@@ -130,7 +131,9 @@ class ONTRunMetadataWorkBot(ONTWorkBot):
     """
 
     def __init__(self, work_type: str):
-        super().__init__(work_type, end_states=[WorkState.CANCELLED])
+        super().__init__(work_type,
+                         work_broker=ONTWorkBroker(self),
+                         end_states=[WorkState.CANCELLED])
 
     @stage_op
     def stage_input_data(self, session: Session, wi: WorkInstance, **kwargs):
@@ -250,7 +253,7 @@ class ONTWorkBroker(WorkBroker):
     """
 
     def __init__(self, workbot: ONTWorkBot):
-        self.worbot = workbot
+        self.workbot = workbot
 
     def request_work(self, wb_session=None,
                      mlwh_session=None, start_date=None, zone=None) -> int:
@@ -333,8 +336,8 @@ class ONTWorkBroker(WorkBroker):
         avus = [avu.with_namespace(ONTMetadata.namespace) for avu in
                 [AVU(ONTMetadata.EXPERIMENT_NAME.value, experiment_name),
                  AVU(ONTMetadata.INSTRUMENT_SLOT.value, instrument_slot)]]
-        found = self.worbot.rods_handler.meta_query(avus, collection=True,
-                                                    zone=zone)
+        found = self.workbot.rods_handler.meta_query(avus, collection=True,
+                                                     zone=zone)
 
         if not found:
             log.info("No collection in iRODS for "
@@ -350,11 +353,11 @@ class ONTWorkBroker(WorkBroker):
         #  metadata. Is this the behaviour we want?
         num_added = 0
         for path in found:
-            wi = self.worbot.add_work(session, path)
+            wi = self.workbot.add_work(session, path)
             if wi:
-                self.worbot.add_metadata(session, wi,
-                                         experiment_name=experiment_name,
-                                         instrument_position=instrument_slot)
+                self.workbot.add_metadata(session, wi,
+                                          experiment_name=experiment_name,
+                                          instrument_position=instrument_slot)
                 session.commit()
 
                 log.info("Added {}".format(wi))
