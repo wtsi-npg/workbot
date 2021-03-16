@@ -17,13 +17,15 @@
 #
 # @author Keith James <kdj@sanger.ac.uk>
 
+from __future__ import annotations  # Will not be needed in Python 3.10
+
 import json
 import logging
 import subprocess
-from abc import ABCMeta, abstractmethod
+from abc import abstractmethod
 from os import PathLike
-from pathlib import Path, PurePath
-from typing import Any, Dict, List, Union
+from pathlib import PurePath
+from typing import Any, Dict, List, Tuple, Union
 
 log = logging.getLogger(__package__)
 
@@ -43,6 +45,7 @@ demonstrated a period of stability.
 
 class RodsError(Exception):
     """Exception wrapping an error raised by the iRODS server."""
+
     def __init__(self, message: str, code: int):
         """Create a new exception.
 
@@ -128,6 +131,7 @@ class AVU(object):
 
 
 class BatonJSONEncoder(json.JSONEncoder):
+    """Encoder for baton JSON."""
     def default(self, o: Any) -> Any:
         if isinstance(o, AVU):
             enc = {"attribute": o.attribute, "value": o.value}
@@ -138,7 +142,8 @@ class BatonJSONEncoder(json.JSONEncoder):
             return o.as_posix()
 
 
-def as_baton(d: Dict):
+def as_baton(d: Dict) -> Any:
+    """Object hook for decoding baton JSON."""
     if "attribute" in d:
         attr = str(d["attribute"])
         value = d["value"]
@@ -227,7 +232,7 @@ class BatonClient(object):
         self.proc = None
 
     def list(self, item: Dict, acl=False, avu=False, contents=False,
-             recurse=False, size=False, timestamp=False) -> List[dict]:
+             recurse=False, size=False, timestamp=False) -> List[Dict]:
         if recurse:
             raise NotImplementedError("recurse")
 
@@ -250,8 +255,10 @@ class BatonClient(object):
         args = {BatonClient.OP: BatonClient.REM}
         self._execute(BatonClient.METAMOD, args, item)
 
-    def meta_query(self, avus: List[AVU], zone=None,
-                   collection=False, data_object=False):
+    def meta_query(self, avus: List[AVU],
+                   zone=None,
+                   collection=False,
+                   data_object=False) -> List[Union[DataObject, Collection]]:
         args = {}
         if collection:
             args["collection"] = True
@@ -265,7 +272,7 @@ class BatonClient(object):
         result = self._execute(BatonClient.METAQUERY, args, item)
         return [make_rods_item(self, item) for item in result]
 
-    def _execute(self, operation: str, args: Dict, item: Dict):
+    def _execute(self, operation: str, args: Dict, item: Dict) -> Dict:
         if not self.is_running():
             log.debug("baton-do is not running ... starting")
             self.start()
@@ -324,14 +331,14 @@ class BatonClient(object):
 
 
 class RodsItem(PathLike):
-    """A base class for iRODS path entities.
-    """
+    """A base class for iRODS path entities."""
 
     def __init__(self, client: BatonClient, path: Union[PurePath, str]):
         self.client = client
         self.path = PurePath(path)
 
-    def exists(self):
+    def exists(self) -> bool:
+        """Return true if the item exists in iRODS."""
         try:
             self._list()
         except RodsError as re:
@@ -339,7 +346,15 @@ class RodsItem(PathLike):
                 return False
         return True
 
-    def meta_add(self, *avus) -> int:
+    def meta_add(self, *avus: Tuple[AVU]) -> int:
+        """Add AVUs to the item's metadata, if they are not already present.
+        Return the number of AVUs added.
+
+        Args:
+            *avus: AVUs to add.
+
+        Returns: int
+        """
         current = self.metadata()
         to_add = []
 
@@ -354,7 +369,11 @@ class RodsItem(PathLike):
 
         return len(to_add)
 
-    def metadata(self):
+    def metadata(self) -> List[AVU]:
+        """Return the item's metadata.
+
+        Returns: List[AVU]
+        """
         item = self._list(avu=True).pop()
         if BatonClient.AVUS not in item.keys():
             raise BatonError("{} key missing "
@@ -377,8 +396,11 @@ class DataObject(RodsItem):
         super().__init__(client, PurePath(remote_path).parent)
         self.name = PurePath(remote_path).name
 
-    def list(self):
-        """Return a new DataObject """
+    def list(self) -> DataObject:
+        """Return a new DataObject representing this one.
+
+        Returns: DataObject
+        """
         item = self._list().pop()
         if BatonClient.OBJ not in item.keys():
             raise BatonError("{} key missing "
@@ -412,13 +434,34 @@ class Collection(RodsItem):
     def __init__(self, client: BatonClient, path: Union[PurePath, str]):
         super().__init__(client, path)
 
-    def list(self, acl=False, avu=False, contents=False, recurse=False):
-        items = self._list(acl=acl, avu=avu, contents=contents,
-                           recurse=recurse)
-        # Gets a list
-        if contents:
-            return [make_rods_item(self.client, item) for item in items]
+    def contents(self,
+                 acl=False,
+                 avu=False,
+                 recurse=False) -> List[Union[DataObject, Collection]]:
+        """Return list of the Collection contents.
 
+        Keyword Args:
+          acl: Include ACL information.
+          avu: Include AVU (metadata) information.
+          recurse: Recurse into sub-collections. NOT IMPLEMENTED.
+
+        Returns: List[Union[DataObject, Collection]]
+        """
+
+        items = self._list(acl=acl, avu=avu, contents=True, recurse=recurse)
+
+        return [make_rods_item(self.client, item) for item in items]
+
+    def list(self, acl=False, avu=False) -> Collection:
+        """Return a new Collection representing this one.
+
+        Keyword Args:
+          acl: Include ACL information.
+          avu: Include AVU (metadata) information.
+
+        Returns: Collection
+        """
+        items = self._list(acl=acl, avu=avu)
         # Gets a single item
         return make_rods_item(self.client, items.pop())
 
@@ -441,9 +484,13 @@ class Collection(RodsItem):
         return self.path.as_posix()
 
 
-def make_rods_item(client: BatonClient, item: Dict) -> RodsItem:
-    """Return a new Collection or DataObject as appropriate for a dictionary
-    returned by a BatonClient."""
+def make_rods_item(client: BatonClient,
+                   item: Dict) -> Union[DataObject, Collection]:
+    """Create a new Collection or DataObject as appropriate for a dictionary
+    returned by a BatonClient.
+
+    Returns: Union[DataObject, Collection]
+    """
     if BatonClient.COLL not in item.keys():
         raise BatonError("{} key missing "
                          "from {}".format(BatonClient.COLL, item))

@@ -59,7 +59,7 @@ class TestBatonClient(object):
                      "20190904_1514_GA20000_FAL01979_43578c8f")
 
         coll = Collection(baton_session, p)
-        contents = coll.list(contents=True)
+        contents = coll.contents()
         assert len(contents) == 11
 
     @m.it("Can list a data object")

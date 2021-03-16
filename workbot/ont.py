@@ -225,11 +225,10 @@ class ONTRodsHandler(RodsHandler):
 
             try:
                 coll = Collection(self.client, wi.input_path)
-                contents = coll.list(contents=True)
                 matches = list(filter(lambda p:
                                       re.search(r'final_report.txt.gz$',
                                                 os.fspath(p)),
-                                      contents))
+                                      coll.contents()))
                 if list(matches):
                     log.debug("Found final report matches: {}".format(matches))
                     complete = True
