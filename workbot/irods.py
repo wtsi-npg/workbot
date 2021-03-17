@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #
-# Copyright © 2020 Genome Research Ltd. All rights reserved.
+# Copyright © 2020, 2021 Genome Research Ltd. All rights reserved.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -23,6 +23,7 @@ import json
 import logging
 import subprocess
 from abc import abstractmethod
+from functools import total_ordering
 from os import PathLike
 from pathlib import PurePath
 from typing import Any, Dict, List, Tuple, Union
@@ -64,8 +65,14 @@ class BatonError(Exception):
     pass
 
 
+@total_ordering
 class AVU(object):
-    """AVU is an iRODS attribute, value , units tuple."""
+    """AVU is an iRODS attribute, value , units tuple.
+
+    AVUs may be sorted, where they will sorted lexically, first by
+    namespace (if present), then by attribute, then by value and finally by
+    units (if present).
+    """
 
     SEPARATOR = ":"
     """The attribute namespace separator"""
@@ -118,16 +125,54 @@ class AVU(object):
                    self._units,
                    namespace=namespace)
 
+    def __hash__(self):
+        return hash(self.attribute) + hash(self.value) + hash(self.units)
+
     def __eq__(self, other):
-        return (isinstance(other, AVU) and
-                self.namespace == other.namespace and
-                self.attribute == other.attribute and
-                self.value == other.value and
-                self.units == other.units)
+        if not isinstance(other, AVU):
+            return False
+
+        return self.attribute == other.attribute and \
+            self.value == other.value and \
+            self.units == other.units
+
+    def __lt__(self, other):
+        if self.namespace is not None and other.namespace is None:
+            return True
+        if self.namespace is None and other.namespace is not None:
+            return False
+
+        if self.namespace is not None and other.namespace is not None:
+            if self.namespace < other.namespace:
+                return True
+
+        if self.namespace == other.namespace:
+            if self.attribute < other.attribute:
+                return True
+
+            if self.attribute == other.attribute:
+                if self.value < other.value:
+                    return True
+
+                if self.value == other.value:
+                    if self.units is not None and other.units is None:
+                        return True
+                    if self.units is None and other.units is not None:
+                        return False
+                    if self.units is None and other.units is None:
+                        return False
+
+                    return self.units < other.units
+
+        return False
+
+    def __repr__(self):
+        u = " " + self.units if self._units else ""
+        return "{}={}{}".format(self.attribute, self.value, u)
 
     def __str__(self):
-        return "<AVU '{}' = '{}' {}>".format(self.attribute, self.value,
-                                             self.units)
+        u = " " + self.units if self._units else ""
+        return "<AVU '{}' = '{}'{}>".format(self.attribute, self.value, u)
 
 
 class BatonJSONEncoder(json.JSONEncoder):
@@ -270,7 +315,10 @@ class BatonClient(object):
             item[BatonClient.COLL] = self._zone_hint_to_path(zone)
 
         result = self._execute(BatonClient.METAQUERY, args, item)
-        return [make_rods_item(self, item) for item in result]
+        items = [make_rods_item(self, item) for item in result]
+        items.sort()
+
+        return items
 
     def _execute(self, operation: str, args: Dict, item: Dict) -> Dict:
         if not self.is_running():
@@ -346,7 +394,7 @@ class RodsItem(PathLike):
                 return False
         return True
 
-    def meta_add(self, *avus: Tuple[AVU]) -> int:
+    def meta_add(self, *avus: Union[AVU, Tuple[AVU]]) -> int:
         """Add AVUs to the item's metadata, if they are not already present.
         Return the number of AVUs added.
 
@@ -356,18 +404,60 @@ class RodsItem(PathLike):
         Returns: int
         """
         current = self.metadata()
-        to_add = []
-
-        for avu in avus:
-            if avu not in current:
-                to_add.append(avu)
+        to_add = set(avus).difference(current)
 
         if to_add:
             item = self._to_dict()
-            item[BatonClient.AVUS] = to_add
+            item[BatonClient.AVUS] = list(to_add)
             self.client.meta_add(item)
 
         return len(to_add)
+
+    def meta_remove(self, *avus: Union[AVU, Tuple[AVU]]) -> int:
+        """Remove AVUs from the item's metadata, if they are present.
+        Return the number of AVUs removed.
+
+        Args:
+            *avus: AVUs to remove.
+
+        Returns: int
+        """
+        current = self.metadata()
+        to_remove = set(current).intersection(avus)
+
+        if to_remove:
+            item = self._to_dict()
+            item[BatonClient.AVUS] = list(to_remove)
+            self.client.meta_rem(item)
+
+        return len(to_remove)
+
+    def meta_supersede(self, *avus: Union[AVU, Tuple[AVU]]) -> Tuple[int, int]:
+        """Remove AVUs from the item's metadata that share an attribute with
+         any of the argument AVUs and add the argument AVUs to the item's
+         metadata. Return the numbers of AVUs added and removed."""
+        current = self.metadata()
+
+        rem_attrs = set(map(lambda avu: avu.attribute, avus))
+        to_remove = set(filter(lambda a: a.attribute in rem_attrs, current))
+
+        # If the argument AVUs have some of the AVUs to remove amongst them,
+        # we don't want to remove them from the item, just to add them back.
+        to_remove.difference_update(avus)
+
+        if to_remove:
+            item = self._to_dict()
+            item[BatonClient.AVUS] = list(to_remove)
+            self.client.meta_rem(item)
+
+        to_add = set(avus).difference(current)
+
+        if to_add:
+            item = self._to_dict()
+            item[BatonClient.AVUS] = list(to_add)
+            self.client.meta_add(item)
+
+        return len(to_remove), len(to_add)
 
     def metadata(self) -> List[AVU]:
         """Return the item's metadata.
@@ -378,7 +468,10 @@ class RodsItem(PathLike):
         if BatonClient.AVUS not in item.keys():
             raise BatonError("{} key missing "
                              "from {}".format(BatonClient.AVUS, item))
-        return item[BatonClient.AVUS]
+        avus = item[BatonClient.AVUS]
+        avus.sort()
+
+        return avus
 
     @abstractmethod
     def _to_dict(self):
@@ -447,7 +540,6 @@ class Collection(RodsItem):
 
         Returns: List[Union[DataObject, Collection]]
         """
-
         items = self._list(acl=acl, avu=avu, contents=True, recurse=recurse)
 
         return [make_rods_item(self.client, item) for item in items]
