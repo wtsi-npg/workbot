@@ -1,3 +1,4 @@
+from datetime import datetime
 from pathlib import PurePath
 
 import pytest
@@ -186,14 +187,21 @@ class TestBatonClient(object):
         assert obj.metadata() == [avu1, avu2]
 
         avu3 = AVU("abcde", "88888")
-        avu4 = AVU("abcde", "99999")
-        avu5 = AVU("abcde", "00000")
         obj.meta_add(avu3)
 
-        assert obj.meta_supersede(avu4, avu5) == (2, 2), \
+        # Replace avu1, avu3 with avu4, avu5 (leaving avu2 in place)
+        avu4 = AVU("abcde", "99999")
+        avu5 = AVU("abcde", "00000")
+        date = datetime.utcnow()
+        assert obj.meta_supersede(avu4, avu5, history=True,
+                                  history_date=date) == (2, 3), \
             "AVUs sharing an attribute with a new AVU are replaced"
 
-        expected = [avu2, avu4, avu5]
+        history = AVU("abcde_history",
+                      "[{}] {},{}".format(date.isoformat(timespec="seconds"),
+                                          avu1.value,
+                                          avu3.value))
+        expected = [avu2, avu4, avu5, history]
         expected.sort()
         assert obj.metadata() == expected
 

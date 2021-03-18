@@ -23,6 +23,7 @@ import json
 import logging
 import subprocess
 from abc import abstractmethod
+from datetime import datetime
 from functools import total_ordering
 from os import PathLike
 from pathlib import PurePath
@@ -58,6 +59,9 @@ class RodsError(Exception):
         self.code = code
 
     def __repr__(self):
+        return str(self.code)
+
+    def __str__(self):
         return "<RodsError: {} - {}>".format(self.code, self.message)
 
 
@@ -77,6 +81,9 @@ class AVU(object):
     SEPARATOR = ":"
     """The attribute namespace separator"""
 
+    HISTORY_SUFFIX = "_history"
+    """The attribute history suffix"""
+
     def __init__(self, attribute: str, value: Any, units=None, namespace=None):
         if namespace:
             if namespace.find(AVU.SEPARATOR) >= 0:
@@ -92,6 +99,70 @@ class AVU(object):
         self._attribute = str(attribute)
         self._value = str(value)
         self._units = units
+
+    @classmethod
+    def collate(cls, *avus) -> Dict[str: List[AVU]]:
+        """Collates AVUs by attribute (including namespace, if any) and
+        returns a dict mapping the attribute to a list of AVUs with that
+        attribute.
+
+        Returns: Dict[str: List[AVU]]
+        """
+        collated = {}
+
+        for avu in avus:
+            if avu.attribute not in collated:
+                collated[avu.attribute] = []
+            collated[avu.attribute].append(avu)
+
+        return collated
+
+    @classmethod
+    def history(cls, *avus, history_date=None) -> AVU:
+        """Returns a history AVU describing the argument AVUs. A history AVU is
+        sometimes added to an iRODS path to describe AVUs that were once
+        present, but have been removed. Adding a history AVU can act as a poor
+        man's audit trail and it used because iRODS does not have native
+        history support.
+
+        Args:
+            avus: AVUs removed, which must share the same attribute
+            and namespace (if any).
+            history_date: A datetime to be embedded as part of the history
+            AVU value.
+
+        Returns: AVU
+        """
+        if history_date is None:
+            history_date = datetime.utcnow()
+        date = history_date.isoformat(timespec="seconds")
+
+        # Check that the AVUs have the same namespace and attribute and that
+        # none are history attributes (we don't do meta-history!)
+        namespaces = set()
+        attributes = set()
+        values = set()
+        for avu in avus:
+            if avu.is_history():
+                raise ValueError("Cannot create a history of "
+                                 "a history AVU: {}".format(avu))
+            namespaces.add(avu.namespace)
+            attributes.add(avu.without_namespace)
+            values.add(avu.value)
+
+        if len(namespaces) > 1:
+            raise ValueError("Cannot create a history for AVUs with a "
+                             "mixture of namespaces: {}".format(namespaces))
+        if len(attributes) > 1:
+            raise ValueError("Cannot create a history for AVUs with a "
+                             "mixture of attributes: {}".format(attributes))
+
+        history_namespace = namespaces.pop()
+        history_attribute = attributes.pop() + AVU.HISTORY_SUFFIX
+        history_value = "[{}] {}".format(date, ",".join(sorted(list(values))))
+
+        return AVU(history_attribute, history_value,
+                   namespace=history_namespace)
 
     @property
     def namespace(self):
@@ -124,6 +195,10 @@ class AVU(object):
                    self._value,
                    self._units,
                    namespace=namespace)
+
+    def is_history(self) -> bool:
+        """Return true if this is a history AVU."""
+        return self._attribute.endswith(AVU.HISTORY_SUFFIX)
 
     def __hash__(self):
         return hash(self.attribute) + hash(self.value) + hash(self.units)
@@ -404,11 +479,11 @@ class RodsItem(PathLike):
         Returns: int
         """
         current = self.metadata()
-        to_add = set(avus).difference(current)
+        to_add = sorted(list(set(avus).difference(current)))
 
         if to_add:
             item = self._to_dict()
-            item[BatonClient.AVUS] = list(to_add)
+            item[BatonClient.AVUS] = to_add
             self.client.meta_add(item)
 
         return len(to_add)
@@ -423,20 +498,37 @@ class RodsItem(PathLike):
         Returns: int
         """
         current = self.metadata()
-        to_remove = set(current).intersection(avus)
+        to_remove = sorted(list(set(current).intersection(avus)))
 
         if to_remove:
             item = self._to_dict()
-            item[BatonClient.AVUS] = list(to_remove)
+            item[BatonClient.AVUS] = to_remove
             self.client.meta_rem(item)
 
         return len(to_remove)
 
-    def meta_supersede(self, *avus: Union[AVU, Tuple[AVU]]) -> Tuple[int, int]:
+    def meta_supersede(self, *avus: Union[AVU, Tuple[AVU]],
+                       history=False, history_date=None) -> Tuple[int, int]:
         """Remove AVUs from the item's metadata that share an attribute with
          any of the argument AVUs and add the argument AVUs to the item's
-         metadata. Return the numbers of AVUs added and removed."""
+         metadata. Return the numbers of AVUs added and removed, including any
+         history AVUs created.
+
+         Args:
+             avus: AVUs to add in place of existing AVUs sharing those
+             attributes.
+             history: Create history AVUs describing any AVUs removed when
+             superseding. See AVU.history.
+             history_date: A datetime to be embedded as part of the history
+             AVU values.
+
+         Returns: Tuple[int, int]"""
+        if history_date is None:
+            history_date = datetime.utcnow()
+
         current = self.metadata()
+        log.debug("Superseding AVUs of {}; current: {} "
+                  "new {}".format(self.path, current, avus))
 
         rem_attrs = set(map(lambda avu: avu.attribute, avus))
         to_remove = set(filter(lambda a: a.attribute in rem_attrs, current))
@@ -444,17 +536,28 @@ class RodsItem(PathLike):
         # If the argument AVUs have some of the AVUs to remove amongst them,
         # we don't want to remove them from the item, just to add them back.
         to_remove.difference_update(avus)
+        to_remove = sorted(list(to_remove))
+        log.debug("Removing AVUs from {}: {}".format(self.path, to_remove))
 
         if to_remove:
             item = self._to_dict()
-            item[BatonClient.AVUS] = list(to_remove)
+            item[BatonClient.AVUS] = to_remove
             self.client.meta_rem(item)
 
         to_add = set(avus).difference(current)
+        to_add = list(to_add)
 
+        if history:
+            hist = []
+            for avus in AVU.collate(*to_remove).values():
+                hist.append(AVU.history(*avus, history_date=history_date))
+            to_add += hist
+
+        to_add.sort()
+        log.debug("Adding AVUs to {}: {}".format(self.path, to_add))
         if to_add:
             item = self._to_dict()
-            item[BatonClient.AVUS] = list(to_add)
+            item[BatonClient.AVUS] = to_add
             self.client.meta_add(item)
 
         return len(to_remove), len(to_add)
@@ -468,10 +571,7 @@ class RodsItem(PathLike):
         if BatonClient.AVUS not in item.keys():
             raise BatonError("{} key missing "
                              "from {}".format(BatonClient.AVUS, item))
-        avus = item[BatonClient.AVUS]
-        avus.sort()
-
-        return avus
+        return sorted(item[BatonClient.AVUS])
 
     @abstractmethod
     def _to_dict(self):
