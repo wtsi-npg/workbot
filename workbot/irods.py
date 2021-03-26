@@ -582,6 +582,7 @@ class RodsItem(PathLike):
         to_add = sorted(list(set(avus).difference(current)))
 
         if to_add:
+            log.debug("Adding AVUs to {}: {}".format(self.path, to_add))
             item = self._to_dict()
             item[BatonClient.AVUS] = to_add
             self.client.meta_add(item)
@@ -601,6 +602,7 @@ class RodsItem(PathLike):
         to_remove = sorted(list(set(current).intersection(avus)))
 
         if to_remove:
+            log.debug("Adding AVUs from {}: {}".format(self.path, to_remove))
             item = self._to_dict()
             item[BatonClient.AVUS] = to_remove
             self.client.meta_rem(item)
@@ -638,16 +640,13 @@ class RodsItem(PathLike):
         # we don't want to remove them from the item, just to add them back.
         to_remove.difference_update(avus)
         to_remove = sorted(list(to_remove))
-        log.debug("Removing AVUs from {}: {}".format(self.path, to_remove))
-
         if to_remove:
+            log.debug("Removing AVUs from {}: {}".format(self.path, to_remove))
             item = self._to_dict()
             item[BatonClient.AVUS] = to_remove
             self.client.meta_rem(item)
 
         to_add = sorted(list(set(avus).difference(current)))
-        log.debug("Adding AVUs to {}: {}".format(self.path, to_add))
-
         if history:
             hist = []
             for avus in AVU.collate(*to_remove).values():
@@ -655,6 +654,7 @@ class RodsItem(PathLike):
             to_add += hist
 
         if to_add:
+            log.debug("Adding AVUs to {}: {}".format(self.path, to_add))
             item = self._to_dict()
             item[BatonClient.AVUS] = to_add
             self.client.meta_add(item)
@@ -674,9 +674,8 @@ class RodsItem(PathLike):
         """
         current = self.acl()
         to_add = sorted(list(set(acs).difference(current)))
-        log.debug("Adding ACL to {}: {}".format(self.path, to_add))
-
         if to_add:
+            log.debug("Adding ACL to {}: {}".format(self.path, to_add))
             item = self._to_dict()
             item[BatonClient.ACCESS] = to_add
             self.client.ac_set(item, recurse=recurse)
@@ -696,13 +695,13 @@ class RodsItem(PathLike):
         """
         current = self.acl()
         to_remove = sorted(list(set(current).intersection(acs)))
-        log.debug("Removing ACL from {}: {}".format(self.path, to_remove))
-
-        # In iRODS we "remove" permissions by setting them to NULL
-        for ac in to_remove:
-            ac.perm = Permission.NULL
-
         if to_remove:
+            log.debug("Removing ACL from {}: {}".format(self.path, to_remove))
+
+            # In iRODS we "remove" permissions by setting them to NULL
+            for ac in to_remove:
+                ac.perm = Permission.NULL
+
             item = self._to_dict()
             item[BatonClient.ACCESS] = to_remove
             self.client.ac_set(item, recurse=recurse)
@@ -722,22 +721,20 @@ class RodsItem(PathLike):
                   "new {}".format(self.path, current, acs))
 
         to_remove = sorted(list(set(current).difference(acs)))
-        log.debug("Removing ACL from {}: {}".format(self.path, to_remove))
-
-        # In iRODS we "remove" permissions by setting them to NULL
-        for ac in to_remove:
-            ac.perm = Permission.NULL
-
         if to_remove:
-            item = self._to_dict()
+            log.debug("Removing ACL from {}: {}".format(self.path, to_remove))
 
+            # In iRODS we "remove" permissions by setting them to NULL
+            for ac in to_remove:
+                ac.perm = Permission.NULL
+
+            item = self._to_dict()
             item[BatonClient.ACCESS] = to_remove
             self.client.ac_set(item, recurse=recurse)
 
         to_add = sorted(list(set(acs).difference(current)))
-        log.debug("Adding ACL to {}: {}".format(self.path, to_add))
-
         if to_add:
+            log.debug("Adding ACL to {}: {}".format(self.path, to_add))
             item = self._to_dict()
             item[BatonClient.ACCESS] = to_add
             self.client.ac_set(item, recurse=recurse)
