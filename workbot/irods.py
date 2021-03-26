@@ -24,6 +24,7 @@ import logging
 import subprocess
 from abc import abstractmethod
 from datetime import datetime
+from enum import Enum, unique
 from functools import total_ordering
 from os import PathLike
 from pathlib import PurePath
@@ -69,9 +70,74 @@ class BatonError(Exception):
     pass
 
 
+@unique
+class Permission(Enum):
+    NULL = "null"
+    OWN = "own",
+    READ = "read",
+    WRITE = "write",
+
+
+@total_ordering
+class AC(object):
+    """AC is an iRODS access control."""
+
+    SEPARATOR = "#"
+
+    def __init__(self, user: str, perm: Permission, zone=None):
+        if user is None:
+            raise ValueError("user may not be None")
+
+        if user.find(AC.SEPARATOR) >= 0:
+            raise ValueError("User '{}' should not contain a zone suffix. "
+                             "Please use the zone= keyword argument to set "
+                             "a zone".format(user))
+
+        if zone:
+            if zone.find(AC.SEPARATOR) >= 0:
+                raise ValueError("Zone '{}' "
+                                 "contained '{}'".format(zone, AC.SEPARATOR))
+        self.user = user
+        self.zone = zone
+        self.perm = perm
+
+    def __hash__(self):
+        return hash(self.user) + hash(self.zone) + hash(self.perm)
+
+    def __eq__(self, other):
+        return isinstance(other, AC) and \
+               self.user == other.user and \
+               self.zone == other.zone and \
+               self.perm == other.perm
+
+    def __lt__(self, other):
+        if self.zone is not None and other.zone is None:
+            return True
+
+        if self.zone is None and other.zone is not None:
+            return True
+
+        if self.zone is not None and other.zone is not None:
+            if self.zone < other.zone:
+                return True
+
+        if self.zone == other.zone:
+            if self.user < other.user:
+                return True
+
+            if self.user == other.user:
+                return self.perm.name < other.perm.name
+
+        return False
+
+    def __repr__(self):
+        z = AC.SEPARATOR + self.zone if self.zone else ""
+        return "{}{}:{}".format(self.user, z, self.perm.name.lower())
+
+
 @total_ordering
 class AVU(object):
-    """AVU is an iRODS attribute, value , units tuple.
+    """AVU is an iRODS attribute, value, units tuple.
 
     AVUs may be sorted, where they will sorted lexically, first by
     namespace (if present), then by attribute, then by value and finally by
@@ -253,21 +319,34 @@ class AVU(object):
 class BatonJSONEncoder(json.JSONEncoder):
     """Encoder for baton JSON."""
     def default(self, o: Any) -> Any:
+
         if isinstance(o, AVU):
-            enc = {"attribute": o.attribute, "value": o.value}
+            enc = {BatonClient.ATTRIBUTE: o.attribute,
+                   BatonClient.VALUE: o.value}
             if o.units:
-                enc["units"] = o.units
+                enc[BatonClient.UNITS] = o.units
             return enc
+
+        if isinstance(o, Permission):
+            return o.name.lower()
+
+        if isinstance(o, AC):
+            return {BatonClient.OWNER: o.user,
+                    BatonClient.ZONE: o.zone,
+                    BatonClient.LEVEL: o.perm}
+
         if isinstance(o, PurePath):
             return o.as_posix()
 
 
 def as_baton(d: Dict) -> Any:
     """Object hook for decoding baton JSON."""
-    if "attribute" in d:
-        attr = str(d["attribute"])
-        value = d["value"]
-        units = d.get("units", None)
+
+    # Match an AVU sub-document
+    if BatonClient.ATTRIBUTE in d:
+        attr = str(d[BatonClient.ATTRIBUTE])
+        value = d[BatonClient.VALUE]
+        units = d.get(BatonClient.UNITS, None)
 
         if attr.find(AVU.SEPARATOR) >= 0:  # Has namespace
             (ns, _, bare_attr) = attr.partition(AVU.SEPARATOR)
@@ -282,6 +361,14 @@ def as_baton(d: Dict) -> Any:
 
         return AVU(attr, value, units)
 
+    # Match an access permission sub-document
+    if BatonClient.OWNER in d and BatonClient.LEVEL in d:
+        user = d[BatonClient.OWNER]
+        zone = d[BatonClient.ZONE]
+        level = d[BatonClient.LEVEL]
+
+        return AC(user, Permission[level.upper()], zone=zone)
+
     return d
 
 
@@ -289,12 +376,21 @@ class BatonClient(object):
     """A wrapper around the baton client program, used for interacting with
      iRODS."""
 
-    ACL = "acl"
     AVUS = "avus"
+    ATTRIBUTE = "attribute"
+    VALUE = "value"
+    UNITS = "units"
+
     COLL = "collection"
     OBJ = "data_object"
+    ZONE = "zone"
+
+    ACCESS = "access"
+    OWNER = "owner"
+    LEVEL = "level"
 
     ADD = "add"
+    CHMOD = "chmod"
     REM = "rem"
     LIST = "list"
     METAQUERY = "metaquery"
@@ -394,6 +490,10 @@ class BatonClient(object):
         items.sort()
 
         return items
+
+    def ac_set(self, item: Dict, recurse=False):
+        args = {"recurse": recurse}
+        self._execute(BatonClient.CHMOD, args, item)
 
     def _execute(self, operation: str, args: Dict, item: Dict) -> Dict:
         if not self.is_running():
@@ -522,7 +622,8 @@ class RodsItem(PathLike):
              history_date: A datetime to be embedded as part of the history
              AVU values.
 
-         Returns: Tuple[int, int]"""
+        Returns: Tuple[int, int]
+        """
         if history_date is None:
             history_date = datetime.utcnow()
 
@@ -544,8 +645,8 @@ class RodsItem(PathLike):
             item[BatonClient.AVUS] = to_remove
             self.client.meta_rem(item)
 
-        to_add = set(avus).difference(current)
-        to_add = list(to_add)
+        to_add = sorted(list(set(avus).difference(current)))
+        log.debug("Adding AVUs to {}: {}".format(self.path, to_add))
 
         if history:
             hist = []
@@ -553,12 +654,93 @@ class RodsItem(PathLike):
                 hist.append(AVU.history(*avus, history_date=history_date))
             to_add += hist
 
-        to_add.sort()
-        log.debug("Adding AVUs to {}: {}".format(self.path, to_add))
         if to_add:
             item = self._to_dict()
             item[BatonClient.AVUS] = to_add
             self.client.meta_add(item)
+
+        return len(to_remove), len(to_add)
+
+    def ac_add(self, *acs: Union[AC, Tuple[AC]], recurse=False) -> int:
+        """Add access controls to the item. Return the number of access
+        controls added. If some of the argument access controls are already
+        present, those arguments will be ignored.
+
+        Args:
+            acs: Access controls.
+            recurse: Recursively add access control.
+
+        Returns: int
+        """
+        current = self.acl()
+        to_add = sorted(list(set(acs).difference(current)))
+        log.debug("Adding ACL to {}: {}".format(self.path, to_add))
+
+        if to_add:
+            item = self._to_dict()
+            item[BatonClient.ACCESS] = to_add
+            self.client.ac_set(item, recurse=recurse)
+
+        return len(to_add)
+
+    def ac_rem(self, *acs: Union[AC, Tuple[AC]], recurse=False) -> int:
+        """Remove access controls from the item. Return the number of access
+        controls removed. If some of the argument access controls are not
+        present, those arguments will be ignored.
+
+        Args:
+            acs: Access controls.
+            recurse: Recursively add access control.
+
+        Returns: int
+        """
+        current = self.acl()
+        to_remove = sorted(list(set(current).intersection(acs)))
+        log.debug("Removing ACL from {}: {}".format(self.path, to_remove))
+
+        # In iRODS we "remove" permissions by setting them to NULL
+        for ac in to_remove:
+            ac.perm = Permission.NULL
+
+        if to_remove:
+            item = self._to_dict()
+            item[BatonClient.ACCESS] = to_remove
+            self.client.ac_set(item, recurse=recurse)
+
+        return len(to_remove)
+
+    def ac_supersede(self, *acs: Union[AC, Tuple[AC]],
+                     recurse=False) -> Tuple[int, int]:
+        """Remove all access controls from the item, replacing them with the
+        specified access controls. Return the numbers of access controls
+        removed and added.
+
+
+        """
+        current = self.acl()
+        log.debug("Superseding ACL of {}; current: {} "
+                  "new {}".format(self.path, current, acs))
+
+        to_remove = sorted(list(set(current).difference(acs)))
+        log.debug("Removing ACL from {}: {}".format(self.path, to_remove))
+
+        # In iRODS we "remove" permissions by setting them to NULL
+        for ac in to_remove:
+            ac.perm = Permission.NULL
+
+        if to_remove:
+            item = self._to_dict()
+
+            item[BatonClient.ACCESS] = to_remove
+            self.client.ac_set(item, recurse=recurse)
+
+        to_add = sorted(list(set(acs).difference(current)))
+        log.debug("Adding ACL to {}: {}".format(self.path, to_add))
+
+        if to_add:
+            item = self._to_dict()
+            item[BatonClient.ACCESS] = to_add
+            self.client.ac_set(item, recurse=recurse)
 
         return len(to_remove), len(to_add)
 
@@ -572,6 +754,16 @@ class RodsItem(PathLike):
             raise BatonError("{} key missing "
                              "from {}".format(BatonClient.AVUS, item))
         return sorted(item[BatonClient.AVUS])
+
+    def acl(self) -> List[AC]:
+        """Return the item's Access Control List (ACL).
+
+        Returns: List[AC]"""
+        item = self._list(acl=True).pop()
+        if BatonClient.ACCESS not in item.keys():
+            raise BatonError("{} key missing "
+                             "from {}".format(BatonClient.ACCESS, item))
+        return sorted(item[BatonClient.ACCESS])
 
     @abstractmethod
     def _to_dict(self):
@@ -691,6 +883,26 @@ def make_rods_item(client: BatonClient,
         return DataObject(client, PurePath(item[BatonClient.COLL],
                                            item[BatonClient.OBJ]))
     return Collection(client, PurePath(item[BatonClient.COLL]))
+
+
+def have_admin() -> bool:
+    """Returns true if the current user has iRODS admin capability."""
+    cmd = ["iadmin", "lu"]
+    try:
+        _run(cmd)
+        return True
+    except RodsError:
+        return False
+
+
+def mkgroup(name: str):
+    cmd = ["iadmin", "mkgroup", name]
+    _run(cmd)
+
+
+def rmgroup(name: str):
+    cmd = ["iadmin", "rmgroup", name]
+    _run(cmd)
 
 
 def imkdir(remote_path: Union[PurePath, str], make_parents=True):

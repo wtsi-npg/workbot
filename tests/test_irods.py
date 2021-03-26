@@ -5,7 +5,8 @@ import pytest
 from pytest import mark as m
 
 from tests.irods_fixture import baton_session, irods_gridion
-from workbot.irods import AVU, BatonClient, Collection, DataObject, RodsError
+from workbot.irods import AVU, AC, BatonClient, Collection, \
+    DataObject, Permission, RodsError
 
 #  Stop IDEs "optimizing" away these imports
 _ = irods_gridion
@@ -218,6 +219,93 @@ class TestBatonClient(object):
         found = baton_session.meta_query([avu], collection=True,
                                          zone=irods_gridion)
         assert found == [Collection(baton_session, p)]
+
+    @m.it("Can find a data object by its metadata")
+    def test_meta_query_data_object(self, irods_gridion, baton_session):
+        p = PurePath(irods_gridion, "66", "DN585561I_A1",
+                     "20190904_1514_GA20000_FAL01979_43578c8f",
+                     "final_summary.txt")
+        obj = DataObject(baton_session, p)
+
+        avu = AVU("abcde", "12345")
+        obj.meta_add(avu)
+        assert obj.metadata() == [avu]
+
+        found = baton_session.meta_query([avu], data_object=True,
+                                         zone=irods_gridion)
+        assert found == [DataObject(baton_session, p)]
+
+    @m.it("Can add access control to a data object")
+    def test_add_ac_data_object(self, irods_gridion, baton_session):
+        p = PurePath(irods_gridion, "66", "DN585561I_A1",
+                     "20190904_1514_GA20000_FAL01979_43578c8f",
+                     "final_summary.txt")
+
+        obj = DataObject(baton_session, p)
+        assert obj.acl() == [AC("irods", Permission.OWN, zone="testZone")]
+
+        assert obj.ac_add(AC("irods", Permission.OWN, zone="testZone")) == 0, \
+            "nothing is replaced when new ACL == all old ACL"
+        assert obj.acl() == [AC("irods", Permission.OWN, zone="testZone")]
+
+        assert obj.ac_add(AC("public", Permission.READ, zone="testZone")) == 1
+        assert obj.acl() == [AC("irods", Permission.OWN, zone="testZone"),
+                             AC("public", Permission.READ, zone="testZone")]
+
+    @m.it("Can remove access control from a data object")
+    def test_rem_ac_data_object(self, irods_gridion, baton_session):
+        p = PurePath(irods_gridion, "66", "DN585561I_A1",
+                     "20190904_1514_GA20000_FAL01979_43578c8f",
+                     "final_summary.txt")
+
+        obj = DataObject(baton_session, p)
+        assert obj.acl() == [AC("irods", Permission.OWN, zone="testZone")]
+
+        assert obj.ac_rem(AC("public", Permission.READ, zone="testZone")) == 0, \
+            "nothing is removed when the access control does not exist"
+        assert obj.acl() == [AC("irods", Permission.OWN, zone="testZone")]
+
+        assert obj.ac_add(AC("public", Permission.READ, zone="testZone")) == 1
+        assert obj.acl() == [AC("irods", Permission.OWN, zone="testZone"),
+                             AC("public", Permission.READ, zone="testZone")]
+
+        assert obj.ac_rem(AC("public", Permission.READ, zone="testZone")) == 1
+        assert obj.acl() == [AC("irods", Permission.OWN, zone="testZone")]
+
+
+@m.describe("AC")
+class TestAC(object):
+    @m.describe("Comparison")
+    def test_compare_acs_equal(self, irods_gridion):
+        assert AC("irods", Permission.OWN, zone="testZone") == \
+               AC("irods", Permission.OWN, zone="testZone")
+
+        assert AC("irods", Permission.OWN, zone="testZone") != \
+               AC("irods", Permission.READ, zone="testZone")
+
+        assert AC("irods", Permission.OWN, zone="testZone") != \
+               AC("public", Permission.OWN, zone="testZone")
+
+    def test_compare_acs_lt(self):
+        assert AC("irods", Permission.OWN, zone="testZone") < \
+               AC("public", Permission.OWN, zone="testZone")
+
+        assert AC("irods", Permission.NULL, zone="testZone") < \
+               AC("irods", Permission.OWN, zone="testZone")
+
+    def test_compare_acs_sort(self):
+        acl = [AC("zzz", Permission.OWN, zone="testZone"),
+               AC("aaa", Permission.WRITE, zone="testZone"),
+               AC("aaa", Permission.READ, zone="testZone"),
+               AC("zyy", Permission.READ, zone="testZone"),
+               AC("zyy", Permission.OWN, zone="testZone")]
+        acl.sort()
+
+        assert acl == [AC("aaa", Permission.READ, zone="testZone"),
+                       AC("aaa", Permission.WRITE, zone="testZone"),
+                       AC("zyy", Permission.OWN, zone="testZone"),
+                       AC("zyy", Permission.READ, zone="testZone"),
+                       AC("zzz", Permission.OWN, zone="testZone")]
 
 
 @m.describe("AVU")

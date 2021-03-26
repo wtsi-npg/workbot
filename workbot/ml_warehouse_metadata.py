@@ -19,14 +19,26 @@
 
 from datetime import datetime
 from itertools import starmap
+from typing import List
 
-from workbot.irods import AVU
+from workbot.irods import AC, AVU, Permission
 from workbot.metadata import DublinCore, SampleMetadata, \
     StudyMetadata
 from workbot.ml_warehouse_schema import Sample, Study
 
 
 def make_creation_metadata(creator: str, created: datetime):
+    """Returns standard iRODS metadata for data creation:
+
+      - creator
+      - created
+
+    Args:
+        creator: name of user or service creating data
+        created: creation timestamp
+
+    Returns: List[AVU]
+    """
     return [AVU(DublinCore.CREATOR.value, creator,
                 namespace=DublinCore.namespace),
             AVU(DublinCore.CREATED.value,
@@ -45,7 +57,21 @@ def avu_if_value(attribute, value):
         return AVU(attribute, value)
 
 
-def make_sample_metadata(sample: Sample):
+def make_sample_metadata(sample: Sample) -> List[AVU]:
+    """Returns standard iRODS metadata for a Sample:
+
+     - sample ID
+     - sample name
+     - sample accession
+     - sample donor ID
+     - sample supplier name
+     - sample consent withdrawn
+
+    Args:
+        sample: An ML warehouse schema Sample.
+
+    Returns: List[AVU]
+    """
     av = [[SampleMetadata.SAMPLE_ID.value,
            sample.sanger_sample_id],
           [SampleMetadata.SAMPLE_NAME.value,
@@ -59,7 +85,7 @@ def make_sample_metadata(sample: Sample):
           [SampleMetadata.SAMPLE_CONSENT_WITHDRAWN.value,
            1 if sample.consent_withdrawn else None]]
 
-    return filter(lambda avu: avu is not None, starmap(avu_if_value, av))
+    return list(filter(lambda avu: avu is not None, starmap(avu_if_value, av)))
 
 
 def make_study_metadata(study: Study):
@@ -70,7 +96,14 @@ def make_study_metadata(study: Study):
           [StudyMetadata.STUDY_ACCESSION_NUMBER.value,
            study.accession_number]]
 
-    return filter(lambda avu: avu is not None, starmap(avu_if_value, av))
+    return list(filter(lambda avu: avu is not None, starmap(avu_if_value, av)))
+
+
+def make_sample_acl(sample: Sample, study: Study) -> List[AC]:
+    irods_group = "ss_{}".format(study.id_study_lims)
+    perm = Permission.NULL if sample.consent_withdrawn else Permission.READ
+
+    return [AC(irods_group, perm)]
 
 # FIXME
 # def make_ont_metadata(flowcell: OseqFlowcell):

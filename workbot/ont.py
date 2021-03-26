@@ -31,7 +31,8 @@ from workbot.base import AnnotationMixin, RodsHandler, WorkBot, WorkBroker, \
 from workbot.enums import WorkState
 from workbot.irods import AVU, BatonError, Collection
 from workbot.metadata import ONTMetadata
-from workbot.ml_warehouse_metadata import make_sample_metadata, \
+from workbot.ml_warehouse_metadata import make_sample_acl, \
+    make_sample_metadata, \
     make_study_metadata
 from workbot.ml_warehouse_schema import find_ont_plex_info, find_recent_ont_pos
 from workbot.schema import ONTMeta, WorkInstance
@@ -189,6 +190,8 @@ class ONTRunMetadataWorkBot(ONTWorkBot):
         # These AVUs should be present already
         self.rods_handler.collection(path).meta_add(*avus)
 
+        # There will be either a single fc record (for unplexed data) or
+        # multiple (one per plex of multiplexed data)
         for fc in plex_info:
             log.debug("Found experiment {} slot {} "
                       "tag index: {}".format(meta.experiment_name,
@@ -209,6 +212,10 @@ class ONTRunMetadataWorkBot(ONTWorkBot):
                 coll.meta_add(AVU("tag_index", fc.tag_index))
                 coll.meta_add(*make_study_metadata(fc.study))
                 coll.meta_add(*make_sample_metadata(fc.sample))
+
+                # The ACL could be different for each plex
+                coll.ac_add(*make_sample_acl(fc.sample, fc.study),
+                            recurse=True)
             else:
                 # There is no tag index, meaning that this is not a
                 # multiplexed run, so we add information to the containing
@@ -216,6 +223,9 @@ class ONTRunMetadataWorkBot(ONTWorkBot):
                 coll = self.rods_handler.collection(path)
                 coll.meta_add(*make_study_metadata(fc.study))
                 coll.meta_add(*make_sample_metadata(fc.sample))
+
+                coll.ac_add(*make_sample_acl(fc.sample, fc.study),
+                            recurse=True)
 
     @unstage_op
     def unstage_input_data(self, session: Session, wi: WorkInstance, **kwargs):
