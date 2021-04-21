@@ -4,12 +4,13 @@ from pathlib import PurePath
 import pytest
 from pytest import mark as m
 
-from tests.irods_fixture import baton_session, irods_synthetic
+from tests.irods_fixture import baton_session, irods_synthetic, \
+    tests_have_admin
 from tests.ml_warehouse_fixture import mlwh_session
 from tests.schema_fixture import wb_session
 from workbot.base import AnalysisError
 from workbot.enums import WorkState, WorkType
-from workbot.irods import AVU, Collection
+from workbot.irods import AC, AVU, Collection, Permission
 from workbot.ml_warehouse_schema import find_recent_ont_pos
 from workbot.ont import ONTRunMetadataWorkBot, ONTWorkBroker
 from workbot.schema import WorkInstance
@@ -74,6 +75,7 @@ class TestONTRunMetadataWorkBot(object):
                                     start_date=start_date)
         assert num_added == 0
 
+    @tests_have_admin
     @m.context("When an ONT experiment collection is annotated")
     @m.context("When the experiment is single-sample")
     @m.it("Adds sample and study metadata to the run-folder collection")
@@ -100,6 +102,11 @@ class TestONTRunMetadataWorkBot(object):
         assert AVU("sample", "sample 1") in coll.metadata()
         assert AVU("study_id", "study_02") in coll.metadata()
         assert AVU("study", "Study Y") in coll.metadata()
+
+        ac = AC("ss_study_02", Permission.READ, zone="testZone")
+        assert ac in coll.acl()
+        for item in coll.contents():
+            assert ac in item.acl(), "{} is in {} ACL".format(ac, item)
 
     @m.context("When the experiment is multiplexed")
     @m.it("Adds {tag_index => <n>} metadata to barcode<0n> sub-collections")
@@ -132,6 +139,7 @@ class TestONTRunMetadataWorkBot(object):
 
             assert AVU("tag_index", tag_index) in bc_coll.metadata()
 
+    @tests_have_admin
     @m.it("Adds sample and study metadata to barcode<0n> sub-collections")
     def test_add_new_plex_sample_metadata(self, mlwh_session, wb_session,
                                           irods_synthetic, baton_session):
@@ -161,6 +169,11 @@ class TestONTRunMetadataWorkBot(object):
             assert AVU("sample", sid) in bc_coll.metadata()
             assert AVU("study_id", "study_03") in bc_coll.metadata()
             assert AVU("study", "Study Z") in bc_coll.metadata()
+
+            ac = AC("ss_study_03", Permission.READ, zone="testZone")
+            assert ac in bc_coll.acl()
+            for item in bc_coll.contents():
+                assert ac in item.acl(), "{} is in {} ACL".format(ac, item)
 
     @m.context("When completed")
     @m.it("Can be re-run")

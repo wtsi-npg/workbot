@@ -1,3 +1,22 @@
+# -*- coding: utf-8 -*-
+#
+# Copyright © 2020, 2021 Genome Research Ltd. All rights reserved.
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+# @author Keith James <kdj@sanger.ac.uk>
+
 import os
 import re
 from abc import ABCMeta
@@ -12,7 +31,8 @@ from workbot.base import AnnotationMixin, RodsHandler, WorkBot, WorkBroker, \
 from workbot.enums import WorkState
 from workbot.irods import AVU, BatonError, Collection
 from workbot.metadata import ONTMetadata
-from workbot.ml_warehouse_metadata import make_sample_metadata, \
+from workbot.ml_warehouse_metadata import make_sample_acl, \
+    make_sample_metadata, \
     make_study_metadata
 from workbot.ml_warehouse_schema import find_ont_plex_info, find_recent_ont_pos
 from workbot.schema import ONTMeta, WorkInstance
@@ -170,6 +190,8 @@ class ONTRunMetadataWorkBot(ONTWorkBot):
         # These AVUs should be present already
         self.rods_handler.collection(path).meta_add(*avus)
 
+        # There will be either a single fc record (for unplexed data) or
+        # multiple (one per plex of multiplexed data)
         for fc in plex_info:
             log.debug("Found experiment {} slot {} "
                       "tag index: {}".format(meta.experiment_name,
@@ -190,6 +212,10 @@ class ONTRunMetadataWorkBot(ONTWorkBot):
                 coll.meta_add(AVU("tag_index", fc.tag_index))
                 coll.meta_add(*make_study_metadata(fc.study))
                 coll.meta_add(*make_sample_metadata(fc.sample))
+
+                # The ACL could be different for each plex
+                coll.ac_add(*make_sample_acl(fc.sample, fc.study),
+                            recurse=True)
             else:
                 # There is no tag index, meaning that this is not a
                 # multiplexed run, so we add information to the containing
@@ -197,6 +223,9 @@ class ONTRunMetadataWorkBot(ONTWorkBot):
                 coll = self.rods_handler.collection(path)
                 coll.meta_add(*make_study_metadata(fc.study))
                 coll.meta_add(*make_sample_metadata(fc.sample))
+
+                coll.ac_add(*make_sample_acl(fc.sample, fc.study),
+                            recurse=True)
 
     @unstage_op
     def unstage_input_data(self, session: Session, wi: WorkInstance, **kwargs):
@@ -225,11 +254,10 @@ class ONTRodsHandler(RodsHandler):
 
             try:
                 coll = Collection(self.client, wi.input_path)
-                contents = coll.list(contents=True)
                 matches = list(filter(lambda p:
                                       re.search(r'final_report.txt.gz$',
                                                 os.fspath(p)),
-                                      contents))
+                                      coll.contents()))
                 if list(matches):
                     log.debug("Found final report matches: {}".format(matches))
                     complete = True

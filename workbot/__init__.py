@@ -60,7 +60,6 @@ def _init_mlwh_db():
 # https://docs.sqlalchemy.org/en/13/orm/contextual.html#\
 # sqlalchemy.orm.scoping.scoped_session
 
-
 wb_lock = threading.Lock()
 WBSession = _init_workbot_db()
 

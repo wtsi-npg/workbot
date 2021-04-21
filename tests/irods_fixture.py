@@ -3,8 +3,28 @@ from pathlib import PurePath
 
 import pytest
 
-from workbot.irods import AVU, BatonClient, Collection, imkdir, iput, irm
+from workbot.irods import AVU, BatonClient, Collection, have_admin, imkdir, \
+    iput, irm, \
+    mkgroup, rmgroup
 from workbot.metadata import ONTMetadata
+
+tests_have_admin = pytest.mark.skipif(not have_admin(),
+                                      reason="tests do not have iRODS "
+                                             "admin access")
+
+TEST_GROUPS = ["ss_study_01", "ss_study_02", "ss_study_03"]
+
+
+def add_test_groups():
+    if have_admin():
+        for g in TEST_GROUPS:
+            mkgroup(g)
+
+
+def remove_test_groups():
+    if have_admin():
+        for g in TEST_GROUPS:
+            rmgroup(g)
 
 
 @pytest.fixture(scope="function")
@@ -18,9 +38,12 @@ def irods_gridion(tmp_path):
     expt_root = os.path.join(rods_path, "gridion")
 
     try:
+        add_test_groups()
+
         yield expt_root
     finally:
         irm(root_path, force=True, recurse=True)
+        remove_test_groups()
 
 
 @pytest.fixture(scope="function")
@@ -57,9 +80,12 @@ def irods_synthetic(tmp_path, baton_session):
         meta_add(*avus)
 
     try:
+        add_test_groups()
+
         yield expt_root
     finally:
         irm(root_path, force=True, recurse=True)
+        remove_test_groups()
 
 
 @pytest.fixture(scope="function")
