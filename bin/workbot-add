@@ -20,14 +20,14 @@
 
 import argparse
 import logging
+import sys
 from datetime import datetime, timedelta
 
 from workbot import get_wb_session, get_wh_session
 from workbot.base import WorkBotError, make_workbot
-from workbot.enums import WorkType
 from workbot.irods import RodsError
-from workbot.ont import ONTWorkBroker
 from workbot.utilities import valid_iso_date, valid_work_type
+from workbot.version import version
 
 description = """
 Adds new experiments to the workbot analysis queue, if they are not already
@@ -62,7 +62,7 @@ parser.add_argument("-s", "--start-date",
 parser.add_argument("-w", "--work-type",
                     help="The type of work to be checked for and added "
                          "if any needs to be done",
-                    type=valid_work_type, required=True)
+                    type=valid_work_type, required="--version" not in sys.argv)
 parser.add_argument("-z", "--zone",
                     help="The iRODS zone to check for data to work on")
 
@@ -72,8 +72,15 @@ parser.add_argument("-d", "--debug",
 parser.add_argument("-v", "--verbose",
                     help="Enable INFO level logging to STDERR",
                     action="store_true")
+parser.add_argument("--version",
+                    help="Report the current version and exit",
+                    action="store_true")
 
 args = parser.parse_args()
+
+if args.version:
+    print(version())
+    exit(0)
 
 log = logging.getLogger("main")
 level = logging.ERROR

@@ -36,6 +36,7 @@ from workbot.base import AnalysisError, make_workbot
 from workbot.irods import RodsError
 from workbot.schema import WorkInstance, find_work_in_progress
 from workbot.utilities import valid_work_type
+from workbot.version import version
 
 description = """"""
 
@@ -61,8 +62,15 @@ parser.add_argument("-d", "--debug",
 parser.add_argument("-v", "--verbose",
                     help="Enable INFO level logging to STDERR",
                     action='count')
+parser.add_argument("--version",
+                    help="Report the current version and exit",
+                    action="store_true")
 
 args = parser.parse_args()
+
+if args.version:
+    print(version())
+    exit(0)
 
 log = logging.getLogger("main")
 level = logging.ERROR
